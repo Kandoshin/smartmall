@@ -1,0 +1,34 @@
+# Maven build output
+target/
+*/target/
+
+# IntelliJ IDEA
+.idea/
+*.iml
+*.ipr
+*.iws
+
+# Eclipse / VS Code
+.classpath
+.project
+.settings/
+.vscode/
+
+# Java runtime and logs
+*.log
+hs_err_pid*
+
+# Local environment and secrets
+.env
+.env.*
+application-local.yaml
+application-local.yml
+application-local.properties
+
+# Personal learning notes
+LEARNING_PROFILE.md
+PROGRESS.md
+
+# Operating system files
+.DS_Store
+Thumbs.db
