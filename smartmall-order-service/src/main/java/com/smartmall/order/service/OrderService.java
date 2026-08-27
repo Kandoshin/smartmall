@@ -9,12 +9,17 @@ import com.smartmall.order.entity.Order;
 import com.smartmall.order.entity.OrderItem;
 import com.smartmall.order.mapper.OrderItemMapper;
 import com.smartmall.order.mapper.OrderMapper;
+import com.smartmall.order.exception.OrderNotFoundException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
 import java.util.ArrayList;
 import java.util.List;
+
+import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
+import com.smartmall.order.dto.OrderDetailDTO;
+import com.smartmall.order.dto.OrderItemDTO;
 
 @Service
 public class OrderService {
@@ -82,5 +87,39 @@ public class OrderService {
                 order.getStatus()
         );
 
+    }
+
+    public OrderDetailDTO getOrderDetailById(long orderId){
+        Order order = orderMapper.selectById(orderId);
+
+        if (order == null) {
+            throw new OrderNotFoundException(orderId);
+        }
+
+        LambdaQueryWrapper<OrderItem> queryWrapper =
+                new LambdaQueryWrapper<>();
+
+        queryWrapper.eq(OrderItem::getOrderId, orderId);
+
+        List<OrderItem> orderItems = orderItemMapper.selectList(queryWrapper);
+
+        List<OrderItemDTO> orderItemDTOS = orderItems.stream()
+                .map(item -> new OrderItemDTO(
+                        item.getProductId(),
+                        item.getProductName(),
+                        item.getUnitPrice(),
+                        item.getQuantity(),
+                        item.getSubtotal()
+                ))
+                .toList();
+
+        return new OrderDetailDTO(
+                order.getId(),
+                order.getUserId(),
+                order.getTotalAmount(),
+                order.getStatus(),
+                order.getCreatedAt(),
+                orderItemDTOS
+        );
     }
 }
