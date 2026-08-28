@@ -7,6 +7,8 @@ import com.smartmall.order.dto.OrderDetailDTO;
 import com.smartmall.order.service.OrderService;
 import jakarta.validation.Valid;
 import org.springframework.web.bind.annotation.*;
+import java.util.List;
+import org.springframework.web.bind.annotation.RequestParam;
 
 @RestController
 public class OrderController {
@@ -26,6 +28,11 @@ public class OrderController {
     @GetMapping("/orders/{id}")
     public Result<OrderDetailDTO> get(@PathVariable long id){
         return Result.success(orderService.getOrderDetailById(id));
+    }
+
+    @GetMapping("/orders")
+    public Result<List<OrderDTO>> list(@RequestParam Long userId){
+        return Result.success(orderService.getOrdersByUserId(userId));
     }
 
 }

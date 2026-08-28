@@ -122,4 +122,22 @@ public class OrderService {
                 orderItemDTOS
         );
     }
+
+    public List<OrderDTO> getOrdersByUserId(Long userId){
+        LambdaQueryWrapper<Order> queryWrapper = new LambdaQueryWrapper<>();
+
+        queryWrapper.eq(Order::getUserId,userId);
+        queryWrapper.orderByDesc(Order::getCreatedAt);
+
+        List<Order> orders = orderMapper.selectList(queryWrapper);
+
+        return orders.stream()
+                .map(order -> new OrderDTO(
+                        order.getId(),
+                        order.getTotalAmount(),
+                        order.getStatus()
+                ))
+                .toList();
+
+    }
 }
