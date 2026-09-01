@@ -135,3 +135,49 @@ All successful endpoints use `Result<T>`:
   "data": "具体数据"
 }
 ```
+
+## SmartMall 订单服务 API
+
+基础地址：`http://localhost:8082`
+
+### 取消订单
+
+`PATCH /orders/{id}/cancel`
+
+- 路径参数：`id`，要取消的订单 ID。
+- 请求体：无。
+- 业务规则：只有状态为 `PENDING_PAYMENT` 的订单可以取消。
+
+取消成功时返回 HTTP `200`：
+
+```json
+{
+  "code": 200,
+  "message": "操作成功",
+  "data": {
+    "id": 1,
+    "totalAmount": 599.80,
+    "status": "CANCELLED"
+  }
+}
+```
+
+订单不存在时返回 HTTP `404`：
+
+```json
+{
+  "code": 404,
+  "message": "订单不存在：1",
+  "data": null
+}
+```
+
+订单不是待支付状态（例如重复取消）时返回 HTTP `400`：
+
+```json
+{
+  "code": 400,
+  "message": "订单状态异常",
+  "data": null
+}
+```

@@ -140,4 +140,27 @@ public class OrderService {
                 .toList();
 
     }
+
+    @Transactional
+    public OrderDTO cancelOrder(Long orderId) {
+        Order order = orderMapper.selectById(orderId);
+
+        if (order == null) {
+            throw new OrderNotFoundException(orderId);
+        }
+
+        if (!"PENDING_PAYMENT".equals(order.getStatus())) {
+            throw new IllegalArgumentException("订单状态异常");
+        }
+
+        order.setStatus("CANCELLED");
+        orderMapper.updateById(order);
+
+        return new OrderDTO(
+                order.getId(),
+                order.getTotalAmount(),
+                order.getStatus()
+        );
+
+    }
 }

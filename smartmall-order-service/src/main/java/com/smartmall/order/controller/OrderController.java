@@ -35,4 +35,9 @@ public class OrderController {
         return Result.success(orderService.getOrdersByUserId(userId));
     }
 
+    @PatchMapping("/orders/{id}/cancel")
+    public Result<OrderDTO> cancel(@PathVariable Long id) {
+        return Result.success(orderService.cancelOrder(id));
+    }
+
 }
