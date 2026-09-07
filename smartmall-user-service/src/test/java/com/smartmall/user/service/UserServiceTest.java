@@ -3,6 +3,7 @@ package com.smartmall.user.service;
 import com.smartmall.user.entity.User;
 import com.smartmall.user.exception.UserNotFoundException;
 import org.junit.jupiter.api.Test;
+import org.springframework.security.crypto.password.PasswordEncoder;
 
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.Mockito.*;
@@ -22,7 +23,7 @@ class UserServiceTest {
     @Test
     void shouldThrowWhenUserDoesNotExist() {
         UserMapper userMapper = mock(UserMapper.class);
-        UserService userService = new UserService(userMapper);
+        UserService userService = new UserService(userMapper, mock(PasswordEncoder.class));
 
        when(userMapper.selectById(999L))
                .thenReturn(null);
@@ -35,7 +36,7 @@ class UserServiceTest {
     @Test
     void shouldCreateUserWithGeneratedId(){
         UserMapper userMapper = mock(UserMapper.class);
-        UserService userService = new UserService( userMapper);
+        UserService userService = new UserService(userMapper, mock(PasswordEncoder.class));
 
         UserCreateRequest request = new UserCreateRequest();
         request.setUsername("alice");
@@ -59,7 +60,7 @@ class UserServiceTest {
     @Test
     void shouldGetUserById(){
         UserMapper userMapper = mock(UserMapper.class);
-        UserService userService = new UserService( userMapper);
+        UserService userService = new UserService(userMapper, mock(PasswordEncoder.class));
 
         User user = new User();
         user.setId(10L);
@@ -80,7 +81,7 @@ class UserServiceTest {
     @Test
     void shouldReturnPaginatedUsers() {
         UserMapper userMapper = mock(UserMapper.class);
-        UserService userService = new UserService(userMapper);
+        UserService userService = new UserService(userMapper, mock(PasswordEncoder.class));
 
         User user = new User();
         user.setId(10L);

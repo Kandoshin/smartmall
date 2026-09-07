@@ -1,5 +1,6 @@
 package com.smartmall.user.service;
 
+import com.smartmall.user.dto.RegisterRequest;
 import com.smartmall.user.dto.UserCreateRequest;
 import com.smartmall.user.entity.User;
 import com.smartmall.user.mapper.UserMapper;
@@ -10,15 +11,18 @@ import com.smartmall.user.exception.UserNotFoundException;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.smartmall.common.PageResult;
+import org.springframework.security.crypto.password.PasswordEncoder;
 
 @Service
 public class UserService {
 
     private final UserMapper userMapper;
+    private final PasswordEncoder passwordEncoder;
 
-    public UserService(UserMapper userMapper) {
+    public UserService(UserMapper userMapper, PasswordEncoder passwordEncoder) {
 
         this.userMapper = userMapper;
+        this.passwordEncoder = passwordEncoder;
     }
     public long countUsers() {
         return userMapper.selectCount(null);
@@ -107,6 +111,33 @@ public class UserService {
         if (affectedRows == 0){
             throw new UserNotFoundException(id);
         }
+    }
+
+    public UserDTO register(RegisterRequest request){
+        LambdaQueryWrapper<User> query = new LambdaQueryWrapper<>();
+        query.eq(User::getUsername, request.getUsername());
+
+        User existingUser = userMapper.selectOne(query);
+
+        if(existingUser != null){
+            throw new IllegalArgumentException("用户名已存在");
+        }
+        User user = new User();
+        user.setUsername(request.getUsername());
+        user.setEmail(request.getEmail());
+        user.setPasswordHash(passwordEncoder.encode(request.getPassword()));
+
+        userMapper.insert(user);
+
+        return new UserDTO(
+                user.getId(),
+                user.getUsername(),
+                user.getEmail()
+        );
+
+
+
+
     }
 
 }

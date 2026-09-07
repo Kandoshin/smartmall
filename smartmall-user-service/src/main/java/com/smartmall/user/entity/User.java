@@ -4,6 +4,7 @@ import com.baomidou.mybatisplus.annotation.IdType;
 import com.baomidou.mybatisplus.annotation.TableId;
 import com.baomidou.mybatisplus.annotation.TableName;
 import lombok.Data;
+import com.baomidou.mybatisplus.annotation.TableField;
 
 @Data
 @TableName("users")
@@ -15,4 +16,7 @@ public class User {
     private String username;
 
     private String email;
+
+    @TableField("pswd")
+    private String passwordHash;
 }
