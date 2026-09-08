@@ -4,6 +4,10 @@ import com.smartmall.user.entity.User;
 import com.smartmall.user.exception.UserNotFoundException;
 import org.junit.jupiter.api.Test;
 import org.springframework.security.crypto.password.PasswordEncoder;
+import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
+import com.smartmall.user.dto.LoginRequest;
+import com.smartmall.user.dto.LoginResponse;
+import com.smartmall.user.exception.LoginFailedException;
 
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.Mockito.*;
@@ -21,9 +25,59 @@ import java.util.List;
 class UserServiceTest {
 
     @Test
+    void shouldIssueTokenForCorrectPassword() {
+        UserMapper mapper = mock(UserMapper.class);
+        PasswordEncoder encoder = new BCryptPasswordEncoder();
+        JwtService jwtService = mock(JwtService.class);
+        UserService service = new UserService(mapper, encoder, jwtService);
+        User user = new User();
+        user.setId(10L);
+        user.setUsername("alice");
+        user.setPasswordHash(encoder.encode("Example123!"));
+        when(mapper.selectOne(any())).thenReturn(user);
+        when(jwtService.createAccessToken(10L)).thenReturn("test-token");
+        LoginRequest request = new LoginRequest();
+        request.setUsername("alice");
+        request.setPassword("Example123!");
+
+        LoginResponse result = service.login(request);
+
+        assertEquals("test-token", result.getAccessToken());
+        assertEquals(JwtService.ACCESS_TOKEN_TTL_SECONDS, result.getExpiresIn());
+        assertEquals(10L, result.getUser().getId());
+        assertEquals("alice", result.getUser().getUsername());
+        verify(jwtService).createAccessToken(10L);
+        verify(mapper, never()).insert(any(User.class));
+    }
+
+    @Test
+    void shouldRejectInvalidCredentialsWithoutIssuingToken() {
+        UserMapper mapper = mock(UserMapper.class);
+        PasswordEncoder encoder = new BCryptPasswordEncoder();
+        JwtService jwtService = mock(JwtService.class);
+        UserService service = new UserService(mapper, encoder, jwtService);
+        LoginRequest request = new LoginRequest();
+        request.setUsername("alice");
+        request.setPassword("WrongPassword");
+
+        when(mapper.selectOne(any())).thenReturn(null);
+        assertThrows(LoginFailedException.class, () -> service.login(request));
+
+        User user = new User();
+        user.setId(10L);
+        when(mapper.selectOne(any())).thenReturn(user);
+        assertThrows(LoginFailedException.class, () -> service.login(request));
+
+        user.setPasswordHash(encoder.encode("Example123!"));
+        assertThrows(LoginFailedException.class, () -> service.login(request));
+        verifyNoInteractions(jwtService);
+        verify(mapper, never()).insert(any(User.class));
+    }
+
+    @Test
     void shouldThrowWhenUserDoesNotExist() {
         UserMapper userMapper = mock(UserMapper.class);
-        UserService userService = new UserService(userMapper, mock(PasswordEncoder.class));
+        UserService userService = new UserService(userMapper, mock(PasswordEncoder.class), mock(JwtService.class));
 
        when(userMapper.selectById(999L))
                .thenReturn(null);
@@ -36,7 +90,7 @@ class UserServiceTest {
     @Test
     void shouldCreateUserWithGeneratedId(){
         UserMapper userMapper = mock(UserMapper.class);
-        UserService userService = new UserService(userMapper, mock(PasswordEncoder.class));
+        UserService userService = new UserService(userMapper, mock(PasswordEncoder.class), mock(JwtService.class));
 
         UserCreateRequest request = new UserCreateRequest();
         request.setUsername("alice");
@@ -60,7 +114,7 @@ class UserServiceTest {
     @Test
     void shouldGetUserById(){
         UserMapper userMapper = mock(UserMapper.class);
-        UserService userService = new UserService(userMapper, mock(PasswordEncoder.class));
+        UserService userService = new UserService(userMapper, mock(PasswordEncoder.class), mock(JwtService.class));
 
         User user = new User();
         user.setId(10L);
@@ -81,7 +135,7 @@ class UserServiceTest {
     @Test
     void shouldReturnPaginatedUsers() {
         UserMapper userMapper = mock(UserMapper.class);
-        UserService userService = new UserService(userMapper, mock(PasswordEncoder.class));
+        UserService userService = new UserService(userMapper, mock(PasswordEncoder.class), mock(JwtService.class));
 
         User user = new User();
         user.setId(10L);

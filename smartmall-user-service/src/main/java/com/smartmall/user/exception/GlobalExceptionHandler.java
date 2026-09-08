@@ -52,4 +52,13 @@ public class GlobalExceptionHandler {
                 .status(HttpStatus.NOT_FOUND)
                 .body(Result.failure(404, exception.getMessage()));
     }
+
+    @ExceptionHandler(LoginFailedException.class)
+    public ResponseEntity<Result<Void>> handleLoginFailed(
+            LoginFailedException exception) {
+
+        return ResponseEntity
+                .status(HttpStatus.UNAUTHORIZED)
+                .body(Result.failure(401, exception.getMessage()));
+    }
 }

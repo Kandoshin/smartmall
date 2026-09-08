@@ -1,11 +1,10 @@
 package com.smartmall.user.service;
 
-import com.smartmall.user.dto.RegisterRequest;
-import com.smartmall.user.dto.UserCreateRequest;
+import com.smartmall.user.dto.*;
 import com.smartmall.user.entity.User;
 import com.smartmall.user.mapper.UserMapper;
 import org.springframework.stereotype.Service;
-import com.smartmall.user.dto.UserDTO;
+import com.smartmall.user.exception.LoginFailedException;
 import java.util.List;
 import com.smartmall.user.exception.UserNotFoundException;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
@@ -18,11 +17,16 @@ public class UserService {
 
     private final UserMapper userMapper;
     private final PasswordEncoder passwordEncoder;
+    private final JwtService jwtService;
 
-    public UserService(UserMapper userMapper, PasswordEncoder passwordEncoder) {
+    public UserService(
+            UserMapper userMapper,
+            PasswordEncoder passwordEncoder,
+            JwtService jwtService) {
 
         this.userMapper = userMapper;
         this.passwordEncoder = passwordEncoder;
+        this.jwtService = jwtService;
     }
     public long countUsers() {
         return userMapper.selectCount(null);
@@ -134,10 +138,45 @@ public class UserService {
                 user.getUsername(),
                 user.getEmail()
         );
+    }
 
+    public LoginResponse login(LoginRequest request){
+        LambdaQueryWrapper<User> query = new LambdaQueryWrapper<>();
+        query.eq(User::getUsername,request.getUsername());
 
+        User user = userMapper.selectOne(query);
 
+        if(user == null){
+            throw new LoginFailedException();
+        }
 
+        if(user.getPasswordHash()==null){
+            throw new LoginFailedException();
+        }
+
+        boolean passwordMatch = passwordEncoder.matches(
+                request.getPassword(),
+                user.getPasswordHash()
+        );
+
+        if(!passwordMatch){
+            throw new LoginFailedException();
+        }
+
+        String accessToken = jwtService.createAccessToken(user.getId());
+
+        UserDTO userDTO = new UserDTO(
+                user.getId(),
+                user.getUsername(),
+                user.getEmail()
+        );
+
+        LoginResponse response = new LoginResponse();
+        response.setAccessToken(accessToken);
+        response.setExpiresIn(JwtService.ACCESS_TOKEN_TTL_SECONDS);
+        response.setUser(userDTO);
+
+        return response;
     }
 
 }

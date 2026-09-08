@@ -7,3 +7,8 @@ spring:
     username: root
     password: 123456
     driver-class-name: com.mysql.cj.jdbc.Driver
+
+smartmall:
+  jwt:
+    public-key: file:G:/work/java/project/smartmall-keys/public.pem
+    private-key: file:G:/work/java/project/smartmall-keys/private.pem

@@ -6,6 +6,8 @@ import com.smartmall.user.dto.UserDTO;
 import com.smartmall.user.service.UserService;
 import jakarta.validation.Valid;
 import org.springframework.web.bind.annotation.*;
+import com.smartmall.user.dto.LoginRequest;
+import com.smartmall.user.dto.LoginResponse;
 
 @RestController
 @RequestMapping("/auth")
@@ -20,5 +22,11 @@ public class AuthController {
     public Result<UserDTO> register(
             @Valid @RequestBody RegisterRequest registerRequest){
         return Result.success(userService.register(registerRequest));
+    }
+
+    @PostMapping("/login")
+    public Result<LoginResponse> login(
+            @Valid @RequestBody LoginRequest request) {
+        return Result.success(userService.login(request));
     }
 }
