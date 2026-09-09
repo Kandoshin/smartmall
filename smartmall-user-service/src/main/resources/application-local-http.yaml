@@ -1,0 +1,4 @@
+# Opt in with profile local-http only for loopback development; never enable in production.
+smartmall:
+  auth:
+    cookie-secure: false

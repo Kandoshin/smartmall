@@ -11,6 +11,7 @@ import java.util.List;
 public class JwtService {
 
     public static final long ACCESS_TOKEN_TTL_SECONDS = 900;
+    public static final long REFRESH_TOKEN_TTL_SECONDS = 24 * 60 * 60;
 
     private final JwtEncoder jwtEncoder;
 
@@ -40,4 +41,29 @@ public class JwtService {
 
         return jwt.getTokenValue();
     }
+
+    public String createRefreshToken(Long userId){
+        Instant now = Instant.now();
+
+        JwtClaimsSet claims = JwtClaimsSet.builder()
+                .issuer("smartmall-user-service")
+                .subject(userId.toString())
+                .audience(List.of("smartmall-refresh"))
+                .issuedAt(now)
+                .expiresAt(now.plusSeconds(REFRESH_TOKEN_TTL_SECONDS))
+                .build();
+
+        JwsHeader header = JwsHeader
+                .with(SignatureAlgorithm.RS256)
+                .build();
+
+        JwtEncoderParameters parameters =
+                JwtEncoderParameters.from(header, claims);
+
+        Jwt jwt = jwtEncoder.encode(parameters);
+
+        return jwt.getTokenValue();
+    }
+
+
 }

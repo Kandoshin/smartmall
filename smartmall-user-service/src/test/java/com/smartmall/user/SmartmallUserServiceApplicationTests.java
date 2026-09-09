@@ -13,7 +13,8 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.content;
 
 @SpringBootTest
-@AutoConfigureMockMvc
+// These tests cover the MVC/business contract; AuthSecurityTest covers the real security chain.
+@AutoConfigureMockMvc(addFilters = false)
 class SmartmallUserServiceApplicationTests {
 
 	@Autowired

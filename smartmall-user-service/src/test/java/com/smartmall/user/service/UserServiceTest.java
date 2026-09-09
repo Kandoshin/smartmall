@@ -7,6 +7,7 @@ import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
 import com.smartmall.user.dto.LoginRequest;
 import com.smartmall.user.dto.LoginResponse;
+import com.smartmall.user.dto.LoginResultDTO;
 import com.smartmall.user.exception.LoginFailedException;
 
 import static org.junit.jupiter.api.Assertions.assertThrows;
@@ -36,17 +37,22 @@ class UserServiceTest {
         user.setPasswordHash(encoder.encode("Example123!"));
         when(mapper.selectOne(any())).thenReturn(user);
         when(jwtService.createAccessToken(10L)).thenReturn("test-token");
+        when(jwtService.createRefreshToken(10L)).thenReturn("test-refresh-token");
         LoginRequest request = new LoginRequest();
         request.setUsername("alice");
         request.setPassword("Example123!");
 
-        LoginResponse result = service.login(request);
+        LoginResultDTO loginResult = service.login(request);
+        LoginResponse result = loginResult.getResponse();
 
+        assertEquals("test-refresh-token", loginResult.getRefreshToken());
         assertEquals("test-token", result.getAccessToken());
         assertEquals(JwtService.ACCESS_TOKEN_TTL_SECONDS, result.getExpiresIn());
         assertEquals(10L, result.getUser().getId());
         assertEquals("alice", result.getUser().getUsername());
         verify(jwtService).createAccessToken(10L);
+        verify(jwtService).createRefreshToken(10L);
+        verifyNoMoreInteractions(jwtService);
         verify(mapper, never()).insert(any(User.class));
     }
 

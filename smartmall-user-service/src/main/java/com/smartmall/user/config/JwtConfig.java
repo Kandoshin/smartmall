@@ -15,6 +15,14 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.security.interfaces.RSAPrivateKey;
 import java.security.interfaces.RSAPublicKey;
+import org.springframework.security.oauth2.core.DelegatingOAuth2TokenValidator;
+import org.springframework.security.oauth2.jose.jws.SignatureAlgorithm;
+import org.springframework.security.oauth2.jwt.JwtClaimValidator;
+import org.springframework.security.oauth2.jwt.JwtDecoder;
+import org.springframework.security.oauth2.jwt.JwtValidators;
+import org.springframework.security.oauth2.jwt.NimbusJwtDecoder;
+
+import java.util.List;
 
 @Configuration
 public class JwtConfig {
@@ -42,6 +50,43 @@ public class JwtConfig {
             return new NimbusJwtEncoder(
                     new ImmutableJWKSet<>(new JWKSet(rsaKey))
             );
+        }
+    }
+
+    @Bean
+    public JwtDecoder jwtDecoder(
+            @Value("${smartmall.jwt.public-key}") Resource publicKeyFile
+    ) throws IOException {
+
+        try(InputStream stream = publicKeyFile.getInputStream()) {
+
+            RSAPublicKey publicKey =
+                    RsaKeyConverters.x509().convert(stream);
+
+            NimbusJwtDecoder decoder = NimbusJwtDecoder
+                    .withPublicKey(publicKey)
+                    .signatureAlgorithm(SignatureAlgorithm.RS256)
+                    .build();
+
+            JwtClaimValidator<List<String>> audienceValidator =
+                    new JwtClaimValidator<>(
+                            "aud",
+                            audiences -> audiences !=null
+                            && audiences.contains("smartmall-api")
+                    );
+
+            decoder.setJwtValidator(
+                    new DelegatingOAuth2TokenValidator<>(
+                            JwtValidators.createDefaultWithIssuer(
+                                    "smartmall-user-service"
+                            ),
+                            audienceValidator
+                    )
+            );
+
+            return decoder;
+
+
         }
     }
 }

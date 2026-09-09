@@ -4,6 +4,23 @@ export type ApiResult<T> = {
   data: T
 }
 
+export type User = {
+  id: number
+  username: string
+  email: string | null
+}
+
+export type LoginRequest = {
+  username: string
+  password: string
+}
+
+export type LoginResponse = {
+  accessToken: string
+  expiresIn: number
+  user: User
+}
+
 export type PageResult<T> = {
   records: T[]
   current: number

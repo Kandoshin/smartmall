@@ -140,7 +140,7 @@ public class UserService {
         );
     }
 
-    public LoginResponse login(LoginRequest request){
+    public LoginResultDTO login(LoginRequest request){
         LambdaQueryWrapper<User> query = new LambdaQueryWrapper<>();
         query.eq(User::getUsername,request.getUsername());
 
@@ -164,6 +164,7 @@ public class UserService {
         }
 
         String accessToken = jwtService.createAccessToken(user.getId());
+        String refreshToken = jwtService.createRefreshToken(user.getId());
 
         UserDTO userDTO = new UserDTO(
                 user.getId(),
@@ -176,7 +177,7 @@ public class UserService {
         response.setExpiresIn(JwtService.ACCESS_TOKEN_TTL_SECONDS);
         response.setUser(userDTO);
 
-        return response;
+        return new LoginResultDTO(response,refreshToken);
     }
 
 }
