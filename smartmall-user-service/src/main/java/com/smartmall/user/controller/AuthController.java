@@ -4,6 +4,7 @@ import com.smartmall.common.Result;
 import com.smartmall.user.dto.RegisterRequest;
 import com.smartmall.user.dto.UserDTO;
 import com.smartmall.user.service.UserService;
+import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 import jakarta.validation.Valid;
 import org.springframework.web.bind.annotation.*;
@@ -62,11 +63,38 @@ public class AuthController {
         return Result.success(result.getResponse());
     }
 
+    @PostMapping("/refresh")
+    public Result<LoginResponse> refresh(
+            @CookieValue(name = "smartmall_refresh",required = false)
+            String refreshToken) {
+        return Result.success(userService.refresh(refreshToken));
+    }
+
     @GetMapping("/me")
     public Result<UserDTO> me(@AuthenticationPrincipal Jwt jwt) {
         long userId = Long.parseLong(jwt.getSubject());
         UserDTO user = userService.getUserById(userId);
         return Result.success(user);
+    }
+
+    @PostMapping("/logout")
+    public Result<Void> logout(HttpServletResponse httpResponse) {
+
+        ResponseCookie refreshCookie = ResponseCookie
+                .from("smartmall_refresh","")
+                .httpOnly(true)
+                .secure(cookieSecure)
+                .sameSite("Strict")
+                .path("/api/auth")
+                .maxAge(0)
+                .build();
+
+        httpResponse.addHeader(
+                HttpHeaders.SET_COOKIE,
+                refreshCookie.toString()
+        );
+
+        return Result.success(null);
     }
 
 }

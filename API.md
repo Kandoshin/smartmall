@@ -4,13 +4,15 @@ Base URL: `http://localhost:8080`
 
 ## 当前认证与访问规则
 
-以下规则仅作用于用户服务（8080），不代表商品/订单服务已接入认证。
+以下表格仅描述用户服务（8080）；订单服务（8082）的认证迁移情况见下方“SmartMall 订单服务 API”。商品服务尚未接入此认证链。
 
 | 请求 | 当前访问条件 |
 |---|---|
 | `GET /auth/csrf` | 可匿名领取 CSRF 校验值，不产生登录身份 |
 | `POST /auth/register` | 可匿名访问；必须通过 CSRF，再校验表单和业务规则 |
 | `POST /auth/login` | 可匿名访问；必须通过 CSRF，再检查用户名、密码 |
+| `POST /auth/refresh` | 不要求 Access Token；必须通过 CSRF，再验证 smartmall_refresh Cookie |
+| `POST /auth/logout` | 不要求 Access Token；必须通过 CSRF，通知浏览器清除刷新 Cookie |
 | `GET /auth/me` | 必须携带有效 JWT |
 | 其他用户服务接口，包括 `/users` CRUD | 暂时全部拒绝；管理员授权尚未实现 |
 
@@ -97,11 +99,38 @@ Authorization: Bearer <accessToken>
 
 CSRF Cookie/请求头缺失或校验不匹配时，也使用上述 403 JSON，并在进入 Controller/Service 之前拒绝请求。`permitAll` 表示无需登录，不表示跳过 CSRF。安全过滤器错误不返回底层异常细节；通过 CSRF 后，登录失败、参数校验、用户不存在等错误仍由全局异常处理器生成原有的 401/400/404 响应。
 
-前端已接入上述登录和当前用户接口：`/api/auth/*` 在 Vite 开发环境代理到 8080 的 `/auth/*`。页面内存保存 accessToken，并仅在身份请求头中携带；刷新页面后丢失本页登录状态。登录后会再请求 `/auth/me`，而不是仅根据登录响应显示已认证。
+前端已接入上述登录和当前用户接口：`/api/auth/*` 在 Vite 开发环境代理到 8080 的 `/auth/*`。页面内存保存 accessToken，显式在 `/api/auth/me` 和 `/api/orders/me` 请求头中携带；不全局附加给其他请求。刷新页面后旧内存凭证丢失，页面会用刷新 Cookie 换取新 Access Token 恢复身份。登录或恢复后会再请求 `/auth/me`，而不是仅根据令牌响应显示已认证。
 
-双令牌改造进行中：登录 Service 已生成 `aud=smartmall-refresh`、86400 秒有效的签名 Refresh Token，内部通过 `LoginResultDTO` 交给 Controller；对外 JSON 仍只有原 `LoginResponse`。Controller 登录成功时通过 Set-Cookie 响应头发送 `smartmall_refresh`：HttpOnly、SameSite=Strict、Path=/api/auth、Max-Age=86400、不设置 Domain，默认 Secure=true（显式 local-http 开发配置为 false）。密码错误、表单校验失败或 CSRF 拒绝时不签发新的刷新 Cookie。CSRF Cookie 不是身份凭证。自动刷新、注销 Cookie、角色权限及订单归属授权仍未完成，页面刷新后仍需登录。
+前端右下角支持在 AI 对话页与整页商城之间切换，属于本页视图切换，不产生新的登录/刷新请求。整页商城与侧栏共用购物车和“我的订单”视图。订单列表已接入下方的 `/orders/me` 并携带 Bearer，不再显示查询用户 ID 输入框；创建和取消仍处于迁移阶段，不能把列表接通视为所有订单功能已完成授权。
 
-后续约定为 Access Token 留在内存、Refresh Token 放 HttpOnly Cookie、暂不落库，固定刷新令牌到期时间，不在每次刷新时延长。无服务端刷新会话状态，无法单独撤销被复制的刷新令牌或检测重放；这是开发阶段方案，不是完整生产认证体系。当前退出仍只清除本页凭证。
+登录 Service 生成 `aud=smartmall-refresh`、86400 秒有效的签名 Refresh Token，内部通过 `LoginResultDTO` 交给 Controller；对外 JSON 仍只有原 `LoginResponse`。Controller 登录成功时通过 Set-Cookie 响应头发送 `smartmall_refresh`：HttpOnly、SameSite=Strict、Path=/api/auth、Max-Age=86400、不设置 Domain，默认 Secure=true（显式 local-http 开发配置为 false）。密码错误、表单校验失败或 CSRF 拒绝时不签发新的刷新 Cookie。CSRF Cookie 不是身份凭证。退出清 Cookie 与页面启动恢复已接入；角色权限及订单归属授权仍未完成。
+
+当前约定为 Access Token 留在内存、Refresh Token 放 HttpOnly Cookie、暂不落库，固定刷新令牌到期时间，不在每次刷新时延长。无服务端刷新会话状态，无法单独撤销被复制的刷新令牌或检测重放；这是开发阶段方案，不是完整生产认证体系。主动退出清除本页内存及本浏览器刷新 Cookie，不是服务端撤销 JWT。
+
+2026-09-10 内部准备：`JwtConfig.refreshJwtDecoder` 已实现，UserService 通过 `@Qualifier("refreshJwtDecoder")` 注入它；私有 `verifyRefreshToken` 检查空凭证、调用验证器并返回可信用户 ID。校验器使用配置的 RSA 公钥、只接受 RS256，校验 `iss=smartmall-user-service`、框架时间规则（保留默认时钟容差），要求存在 `exp`、`aud` 恰为 `["smartmall-refresh"]`、`sub` 是规范的正 Long 用户 ID。原 `jwtDecoder` 保持 Access Token 校验规则，并作为默认 Bean，普通 Bearer 请求不会使用刷新校验器。
+
+`UserService.refresh` 已完成调用上述 helper、按可信 ID 查用户、用户存在才签发新 Access Token 并组装 LoginResponse；不签发新 Refresh Token 或延长其期限。POST `/auth/refresh` 已修正 Cookie 名称并通过真实 Controller/Service/过滤器/RSA 的 MockMvc 验证（数据库 Mapper 模拟）。前端 useAuth 在页面挂载时调用 refreshSession；恢复期间只显示聊天首页，不显示等待弹窗或登录表单，侧栏和聊天输入保持禁用。成功后启用页面，401 显示登录窗口，网络/服务异常提供重试，不自动循环刷新。
+
+### 刷新 Access Token
+
+通过 Vite 发送 `POST http://localhost:5173/api/auth/refresh`，无需 JSON 请求体或 Authorization 请求头。先按上方流程 GET `/api/auth/csrf`，携带响应 JSON 的掩码值作为 `X-XSRF-TOKEN` 请求头；浏览器同时携带 `smartmall_csrf` 和登录时收到的 `smartmall_refresh` Cookie。HttpOnly Cookie 无需也不能由前端 JavaScript 读取。
+
+- 成功：HTTP 200，`Result<LoginResponse>`，data 含 accessToken、expiresIn=900、user；不返回新的刷新 Cookie。
+- CSRF 缺失或无效：HTTP 403；不会进入刷新业务。
+- 通过 CSRF 后，刷新 Cookie 缺失、非法、过期、用途不符或用户已删除：HTTP 401，`Result.failure(401, "登录已失效，请重新登录")`，不暴露验证细节。
+
+不要给刷新请求附加过期的 Bearer Token，否则资源服务器过滤器会先拒绝请求。前端页面启动时依次请求 CSRF → refresh → me；仅最后的 me 请求附加新 Access Token。刷新 Cookie 缺失或过期时回到登录窗口；网络/服务异常可重试恢复或手动登录。当前只接入启动恢复，尚未实现页面停留期间 Access Token 到期自动续期。
+
+### 主动退出登录
+
+`POST http://localhost:5173/api/auth/logout`，无 JSON 请求体，不附加 Bearer Token。先 GET `/api/auth/csrf`，保持 Cookie 并携带 JSON 返回的掩码值作为 `X-XSRF-TOKEN` 请求头，方式与刷新接口一致。
+
+- 成功：HTTP 200，`{"code":200,"message":"操作成功","data":null}`；响应通过 Set-Cookie 将 smartmall_refresh 设为空值、Max-Age=0，保持 Path=/api/auth、HttpOnly、SameSite=Strict 和当前 Secure 配置，不设置 Domain。
+- 无刷新 Cookie 或 Cookie 无效时仍可成功，重复退出也安全；不查数据库、不重新签发令牌。
+- CSRF 缺失或无效：HTTP 403，不发送删除刷新 Cookie 的指令。
+- 清本浏览器 Cookie 不撤销已被复制的 Access/Refresh JWT，也不清除其他标签页已持有的 Access Token。
+
+前端按钮已接入：点击后先取消旧身份请求并清除本页内存/对话/商城状态，显示登录弹窗；收到成功响应后显示“已退出登录”。请求失败则提示无法确认 Cookie 清除并提供“重试退出”，不误报完全退出。请求进行中禁止提交新登录，以免迟到的 Cookie 删除响应覆盖新登录。关闭页面或刷新不调用退出接口，保留刷新 Cookie；再次打开页面时，有效 Cookie 可恢复身份。主动退出成功后再刷新则应保持未登录。
 
 ## Create User
 
@@ -241,9 +270,51 @@ All successful endpoints use `Result<T>`:
 
 基础地址：`http://localhost:8082`
 
+### 当前迁移边界
+
+订单服务已配置 Access JWT 公钥验证，并使用 Spring Boot 默认的 Bearer 安全过滤链。只接受 RS256，校验 `iss=smartmall-user-service`、`aud` 包含 `smartmall-api`、时间规则、必填 `exp` 和规范的正 Long 类型用户 ID（`sub`）。刷新用途令牌不能替代 Access Token。
+
+目前只有列表查询已从 JWT 取得用户 ID；创建订单仍读取请求中的 `userId`，详情和取消仍缺少订单归属判断。认证不等于完成这些接口的授权。订单服务的安全错误仍使用框架默认响应，尚未统一为用户服务上面的错误 JSON。前端只给列表请求接入 Bearer，未给创建和取消附加凭证；这两个写操作仍不能视为可用的已认证交易流程，页面保留迁移提示。
+
+### 查询我的订单
+
+`GET /orders/me`
+
+本地经 Vite 代理的完整地址：`http://localhost:5173/api/orders/me`。
+
+- 请求体：无；不需要 `userId` 参数。
+- 请求头：`Authorization: Bearer <登录或刷新响应中的 accessToken>`。
+- Controller 从已认证 JWT 的 `sub` 取得用户 ID，再交给原 Service 按该 ID 查询。
+- 列表按 `createdAt` 倒序；尚无 `id` 次级排序。
+
+成功返回 HTTP `200`，示例：
+
+```json
+{
+  "code": 200,
+  "message": "操作成功",
+  "data": [
+    { "id": 101, "totalAmount": 199.00, "status": "PENDING_PAYMENT" }
+  ]
+}
+```
+
+无订单仍返回 HTTP `200`，`data` 为 `[]`。缺少凭证、凭证无效或过期（超过框架时钟容差）、误用刷新令牌、`sub` 不合法时返回 HTTP `401`，不会进入订单查询业务。
+
+附加 `?userId=8` 不会改变查询身份：若 JWT 的 `sub` 为 `"7"`，仍查询用户 7。旧 `GET /orders?userId=8` 已移除；有效 Bearer 下返回 `405 Method Not Allowed`（同路径仍有 `POST /orders`），不是旧查询入口。
+
+前端打开订单视图时调用 `getMyOrders`，以 `cache: no-store` 避免缓存个人订单，以 `credentials: omit` 不发送 Cookie，只显式携带当前内存 Access Token。现有同一个 `useAuth` 会话向商城提供查询回调，组件不会创建另一套登录状态或自己解析 JWT。
+
+- 未登录/恢复中不加载订单；恢复成功后使用新 Access Token。
+- 订单返回 `401`（包括空响应体）时清本页登录状态、显示登录弹窗，不自动刷新或重试；不调用退出接口或删除刷新 Cookie。
+- 网络、`403`、服务异常只显示订单错误和“重新加载”，不当成凭证过期、不清除登录身份。
+- 离开订单视图取消未完成的列表请求；退出/过期清会话也取消查询，迟到结果不能进入后续会话。列表为空显示“你还没有订单”。
+
 ### 取消订单
 
 `PATCH /orders/{id}/cancel`
+
+以下保留已有业务层契约；本阶段尚未完成此接口的归属校验及受保护 HTTP 联调。
 
 - 路径参数：`id`，要取消的订单 ID。
 - 请求体：无。

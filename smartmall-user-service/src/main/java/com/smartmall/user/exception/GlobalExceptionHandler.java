@@ -8,9 +8,18 @@ import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
 import jakarta.validation.ConstraintViolationException;
+import org.springframework.security.oauth2.jwt.BadJwtException;
 
 @RestControllerAdvice
 public class GlobalExceptionHandler {
+
+    // Invalid refresh credentials are authentication failures, not leaked decoder details.
+    // Do not catch all JwtException: signing/infrastructure failures are server errors.
+    @ExceptionHandler(BadJwtException.class)
+    public ResponseEntity<Result<Void>> handleBadJwt(BadJwtException exception) {
+        return ResponseEntity.status(HttpStatus.UNAUTHORIZED)
+                .body(Result.failure(401, "登录已失效，请重新登录"));
+    }
 
     @ExceptionHandler(IllegalArgumentException.class)
     public ResponseEntity<Result<Void>> handleIllegalArgumentException(

@@ -9,6 +9,9 @@ import com.smartmall.user.dto.LoginRequest;
 import com.smartmall.user.dto.LoginResponse;
 import com.smartmall.user.dto.LoginResultDTO;
 import com.smartmall.user.exception.LoginFailedException;
+import org.springframework.security.oauth2.jwt.JwtDecoder;
+import org.springframework.security.oauth2.jwt.Jwt;
+import org.springframework.security.oauth2.jwt.BadJwtException;
 
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.Mockito.*;
@@ -26,11 +29,91 @@ import java.util.List;
 class UserServiceTest {
 
     @Test
+    void refreshValidatesAndLooksUpUserBeforeIssuingOnlyAccessToken() {
+        UserMapper mapper = mock(UserMapper.class);
+        JwtDecoder decoder = mock(JwtDecoder.class);
+        JwtService tokens = mock(JwtService.class);
+        PasswordEncoder passwords = mock(PasswordEncoder.class);
+        var service = new UserService(mapper, passwords, tokens, decoder);
+        when(decoder.decode("refresh")).thenReturn(verifiedRefresh());
+        User user = new User();
+        user.setId(10L);
+        user.setUsername("alice");
+        when(mapper.selectById(10L)).thenReturn(user);
+        when(tokens.createAccessToken(10L)).thenReturn("new-access");
+
+        LoginResponse response = service.refresh("refresh");
+
+        assertEquals("new-access", response.getAccessToken());
+        assertEquals(900, response.getExpiresIn());
+        assertEquals(10L, response.getUser().getId());
+        assertEquals("alice", response.getUser().getUsername());
+        var order = inOrder(decoder, mapper, tokens);
+        order.verify(decoder).decode("refresh");
+        order.verify(mapper).selectById(10L);
+        order.verify(tokens).createAccessToken(10L);
+        verifyNoMoreInteractions(decoder, mapper, tokens);
+        verifyNoInteractions(passwords);
+    }
+
+    @Test
+    void missingRefreshNeverQueriesOrSigns() {
+        UserMapper mapper = mock(UserMapper.class);
+        JwtDecoder decoder = mock(JwtDecoder.class);
+        JwtService tokens = mock(JwtService.class);
+        var service = new UserService(mapper, mock(PasswordEncoder.class), tokens, decoder);
+        for (String token : new String[]{null, "", " ", "\t"}) {
+            assertThrows(BadJwtException.class, () -> service.refresh(token));
+        }
+        verifyNoInteractions(decoder, mapper, tokens);
+    }
+
+    @Test
+    void rejectedRefreshNeverQueriesOrSigns() {
+        UserMapper mapper = mock(UserMapper.class);
+        JwtDecoder decoder = mock(JwtDecoder.class);
+        JwtService tokens = mock(JwtService.class);
+        when(decoder.decode("invalid")).thenThrow(new BadJwtException("internal validation detail"));
+        var service = new UserService(mapper, mock(PasswordEncoder.class), tokens, decoder);
+        assertThrows(BadJwtException.class, () -> service.refresh("invalid"));
+        verifyNoInteractions(mapper, tokens);
+    }
+
+    @Test
+    void deletedUserNeverReceivesNewTokens() {
+        UserMapper mapper = mock(UserMapper.class);
+        JwtDecoder decoder = mock(JwtDecoder.class);
+        JwtService tokens = mock(JwtService.class);
+        when(decoder.decode("refresh")).thenReturn(verifiedRefresh());
+        var service = new UserService(mapper, mock(PasswordEncoder.class), tokens, decoder);
+        assertThrows(BadJwtException.class, () -> service.refresh("refresh"));
+        verify(mapper).selectById(10L);
+        verifyNoInteractions(tokens);
+    }
+
+    @Test
+    void databaseFailureIsNotTreatedAsSuccessfulRefresh() {
+        UserMapper mapper = mock(UserMapper.class);
+        JwtDecoder decoder = mock(JwtDecoder.class);
+        JwtService tokens = mock(JwtService.class);
+        when(decoder.decode("refresh")).thenReturn(verifiedRefresh());
+        when(mapper.selectById(10L)).thenThrow(new IllegalStateException("database unavailable"));
+        var service = new UserService(mapper, mock(PasswordEncoder.class), tokens, decoder);
+        assertThrows(IllegalStateException.class, () -> service.refresh("refresh"));
+        verifyNoInteractions(tokens);
+    }
+
+    // Unit fixture only; production signature/claims validation is covered by RefreshJwtDecoderTest.
+    private Jwt verifiedRefresh() {
+        return Jwt.withTokenValue("refresh").header("alg", "RS256").subject("10").build();
+    }
+
+    @Test
     void shouldIssueTokenForCorrectPassword() {
         UserMapper mapper = mock(UserMapper.class);
         PasswordEncoder encoder = new BCryptPasswordEncoder();
         JwtService jwtService = mock(JwtService.class);
-        UserService service = new UserService(mapper, encoder, jwtService);
+        UserService service = new UserService(mapper, encoder, jwtService, mock(JwtDecoder.class));
         User user = new User();
         user.setId(10L);
         user.setUsername("alice");
@@ -61,7 +144,7 @@ class UserServiceTest {
         UserMapper mapper = mock(UserMapper.class);
         PasswordEncoder encoder = new BCryptPasswordEncoder();
         JwtService jwtService = mock(JwtService.class);
-        UserService service = new UserService(mapper, encoder, jwtService);
+        UserService service = new UserService(mapper, encoder, jwtService, mock(JwtDecoder.class));
         LoginRequest request = new LoginRequest();
         request.setUsername("alice");
         request.setPassword("WrongPassword");
@@ -83,7 +166,7 @@ class UserServiceTest {
     @Test
     void shouldThrowWhenUserDoesNotExist() {
         UserMapper userMapper = mock(UserMapper.class);
-        UserService userService = new UserService(userMapper, mock(PasswordEncoder.class), mock(JwtService.class));
+        UserService userService = new UserService(userMapper, mock(PasswordEncoder.class), mock(JwtService.class), mock(JwtDecoder.class));
 
        when(userMapper.selectById(999L))
                .thenReturn(null);
@@ -96,7 +179,7 @@ class UserServiceTest {
     @Test
     void shouldCreateUserWithGeneratedId(){
         UserMapper userMapper = mock(UserMapper.class);
-        UserService userService = new UserService(userMapper, mock(PasswordEncoder.class), mock(JwtService.class));
+        UserService userService = new UserService(userMapper, mock(PasswordEncoder.class), mock(JwtService.class), mock(JwtDecoder.class));
 
         UserCreateRequest request = new UserCreateRequest();
         request.setUsername("alice");
@@ -120,7 +203,7 @@ class UserServiceTest {
     @Test
     void shouldGetUserById(){
         UserMapper userMapper = mock(UserMapper.class);
-        UserService userService = new UserService(userMapper, mock(PasswordEncoder.class), mock(JwtService.class));
+        UserService userService = new UserService(userMapper, mock(PasswordEncoder.class), mock(JwtService.class), mock(JwtDecoder.class));
 
         User user = new User();
         user.setId(10L);
@@ -141,7 +224,7 @@ class UserServiceTest {
     @Test
     void shouldReturnPaginatedUsers() {
         UserMapper userMapper = mock(UserMapper.class);
-        UserService userService = new UserService(userMapper, mock(PasswordEncoder.class), mock(JwtService.class));
+        UserService userService = new UserService(userMapper, mock(PasswordEncoder.class), mock(JwtService.class), mock(JwtDecoder.class));
 
         User user = new User();
         user.setId(10L);

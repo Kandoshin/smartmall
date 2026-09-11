@@ -20,6 +20,7 @@ export class ApiError extends Error {
 }
 
 async function request<T>(url: string, options?: RequestInit): Promise<T> {
+  options?.signal?.throwIfAborted()
   let response: Response
   try {
     response = await fetch(url, {
@@ -39,9 +40,11 @@ async function request<T>(url: string, options?: RequestInit): Promise<T> {
   let payload: ApiResult<T>
   try {
     payload = (await response.json()) as ApiResult<T>
-  } catch {
+  } catch (error) {
+    if (options?.signal?.aborted) throw error
     throw new ApiError(response.status, fallbackMessage)
   }
+  options?.signal?.throwIfAborted()
 
   if (!payload || typeof payload.code !== 'number') {
     throw new ApiError(response.status, fallbackMessage)
@@ -54,9 +57,9 @@ async function request<T>(url: string, options?: RequestInit): Promise<T> {
   return payload.data
 }
 
-export async function login(credentials: LoginRequest, signal?: AbortSignal) {
+async function getAuthCsrf(signal?: AbortSignal) {
   // Read a masked CSRF token; the matching HttpOnly cookie is handled by the browser.
-  // Fetch on every login attempt instead of persisting or sharing credentials in storage.
+  // Fetch for each auth write instead of persisting or sharing credentials in storage.
   const csrf = await request<{ headerName: string; token: string }>('/api/auth/csrf', {
     credentials: 'same-origin', cache: 'no-store', signal,
   })
@@ -64,6 +67,11 @@ export async function login(credentials: LoginRequest, signal?: AbortSignal) {
     throw new ApiError(0, '无法初始化登录校验，请稍后重试')
   }
   signal?.throwIfAborted()
+  return csrf
+}
+
+export async function login(credentials: LoginRequest, signal?: AbortSignal) {
+  const csrf = await getAuthCsrf(signal)
   return request<LoginResponse>('/api/auth/login', {
     method: 'POST',
     credentials: 'same-origin',
@@ -73,10 +81,44 @@ export async function login(credentials: LoginRequest, signal?: AbortSignal) {
   })
 }
 
-// Explicit token parameter: never attach credentials to unrelated product/order requests.
+// The browser sends the HttpOnly refresh cookie; JavaScript never reads its value.
+// Called at page startup to restore an in-memory Access Token, never to persist it.
+export async function refreshSession(signal?: AbortSignal) {
+  const csrf = await getAuthCsrf(signal)
+  return request<LoginResponse>('/api/auth/refresh', {
+    method: 'POST',
+    credentials: 'same-origin',
+    cache: 'no-store',
+    headers: { [csrf.headerName]: csrf.token },
+    signal,
+  })
+}
+
+// Clear the browser's refresh cookie even when no usable Access Token remains.
+export async function logoutSession(signal?: AbortSignal) {
+  const csrf = await getAuthCsrf(signal)
+  return request<null>('/api/auth/logout', {
+    method: 'POST',
+    credentials: 'same-origin',
+    cache: 'no-store',
+    headers: { [csrf.headerName]: csrf.token },
+    signal,
+  })
+}
+
+// Only explicitly protected requests receive a token, never every request globally.
 export function getCurrentUser(accessToken: string, signal?: AbortSignal) {
   return request<User>('/api/auth/me', {
     headers: { Authorization: `Bearer ${accessToken}` },
+    signal,
+  })
+}
+
+export function getMyOrders(accessToken: string, signal?: AbortSignal) {
+  return request<OrderSummary[]>('/api/orders/me', {
+    headers: { Authorization: `Bearer ${accessToken}` },
+    credentials: 'omit',
+    cache: 'no-store',
     signal,
   })
 }
@@ -110,10 +152,6 @@ export function createOrder(userId: number, items: OrderCreateItem[]) {
     },
     body: JSON.stringify({ userId, items }),
   })
-}
-
-export function getOrdersByUserId(userId: number) {
-  return request<OrderSummary[]>(`/api/orders?userId=${userId}`)
 }
 
 export function cancelOrder(orderId: number) {

@@ -3,7 +3,6 @@ import { computed, onUnmounted, ref, watch } from 'vue'
 import {
   cancelOrder as cancelOrderRequest,
   createOrder,
-  getOrdersByUserId,
   getProducts,
 } from '../api'
 import type { CartItem, OrderSummary, Product } from '../types'
@@ -11,7 +10,11 @@ import type { CartItem, OrderSummary, Product } from '../types'
 type ViewName = 'products' | 'orders'
 type Notice = { message: string; tone: 'success' | 'error' }
 
-const props = defineProps<{ view: ViewName }>()
+const props = withDefaults(defineProps<{
+  view: ViewName
+  layout?: 'drawer' | 'storefront'
+  fetchOrders: (signal?: AbortSignal) => Promise<OrderSummary[]>
+}>(), { layout: 'drawer' })
 const emit = defineEmits<{ navigate: [view: ViewName] }>()
 const currentView = computed(() => props.view)
 const products = ref<Product[]>([])
@@ -27,12 +30,13 @@ const cart = ref<CartItem[]>([])
 const checkoutUserId = ref(1)
 const checkoutLoading = ref(false)
 
-const orderQueryUserId = ref(1)
 const orders = ref<OrderSummary[]>([])
 const ordersLoading = ref(false)
 const ordersError = ref('')
 const notice = ref<Notice | null>(null)
 let noticeTimer: number | undefined
+let pendingOrders: AbortController | null = null
+let ordersVersion = 0
 
 const cartCount = computed(() =>
   cart.value.reduce((sum, item) => sum + item.quantity, 0),
@@ -146,7 +150,6 @@ async function checkout() {
       })),
     )
     cart.value = []
-    orderQueryUserId.value = checkoutUserId.value
     showNotice(`订单 #${order.id} 创建成功`, 'success')
     emit('navigate', 'orders')
   } catch (error) {
@@ -159,20 +162,33 @@ async function checkout() {
   }
 }
 
-async function loadOrders() {
-  if (!Number.isInteger(orderQueryUserId.value) || orderQueryUserId.value < 1) {
-    ordersError.value = '请输入有效的用户 ID'
-    return
-  }
+function cancelPendingOrders() {
+  ordersVersion += 1
+  pendingOrders?.abort()
+  pendingOrders = null
+  ordersLoading.value = false
+}
 
+async function loadOrders() {
+  cancelPendingOrders()
+  const version = ordersVersion
+  const controller = new AbortController()
+  pendingOrders = controller
   ordersLoading.value = true
   ordersError.value = ''
+  orders.value = []
   try {
-    orders.value = await getOrdersByUserId(orderQueryUserId.value)
+    const result = await props.fetchOrders(controller.signal)
+    if (version !== ordersVersion || controller.signal.aborted) return
+    orders.value = result
   } catch (error) {
+    if (version !== ordersVersion || controller.signal.aborted) return
     ordersError.value = error instanceof Error ? error.message : '订单加载失败'
   } finally {
-    ordersLoading.value = false
+    if (version === ordersVersion) {
+      ordersLoading.value = false
+      pendingOrders = null
+    }
   }
 }
 
@@ -192,15 +208,56 @@ async function handleCancelOrder(order: OrderSummary) {
 watch(() => props.view, (view) => {
   if (view === 'products' && products.value.length === 0) void loadProducts()
   if (view === 'orders') void loadOrders()
+  else cancelPendingOrders()
 }, { immediate: true })
 
-onUnmounted(() => window.clearTimeout(noticeTimer))
+onUnmounted(() => {
+  window.clearTimeout(noticeTimer)
+  cancelPendingOrders()
+})
 </script>
 
 <template>
-  <div class="commerce-panel">
-    <p class="demo-warning">教学演示：订单仍按手填用户 ID 操作，后端尚未校验订单归属。请勿用于真实交易。</p>
-    <main v-if="currentView === 'products'" class="page-grid">
+  <div :class="['commerce-panel', { 'is-storefront': layout === 'storefront' }]">
+    <header v-if="layout === 'storefront'" class="storefront-heading">
+      <div class="storefront-hero">
+        <div>
+          <span class="eyebrow">SMARTMALL · 用心挑选</span>
+          <h1>{{ currentView === 'products' ? '好物，慢慢选。' : '看看你的订单。' }}</h1>
+          <p>{{ currentView === 'products' ? '没有纷扰，从你需要的一件好物开始。' : '查看订单状态，或继续挑选喜欢的商品。' }}</p>
+        </div>
+        <div class="storefront-aside" aria-hidden="true">
+          <span>CHAT + SHOP</span>
+          <p>聊一聊，或逛一逛。<br />购物可以很简单。</p>
+        </div>
+      </div>
+      <nav class="storefront-nav" aria-label="商城导航">
+        <div class="storefront-tabs">
+          <button
+            type="button"
+            :class="{ active: currentView === 'products' }"
+            :aria-current="currentView === 'products' ? 'page' : undefined"
+            @click="emit('navigate', 'products')"
+          >全部商品</button>
+          <button
+            type="button"
+            :class="{ active: currentView === 'orders' }"
+            :aria-current="currentView === 'orders' ? 'page' : undefined"
+            @click="emit('navigate', 'orders')"
+          >订单记录</button>
+        </div>
+        <a v-if="currentView === 'products'" class="cart-link" href="#storefront-cart">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true">
+            <path d="M5 7h14l1 14H4L5 7Z" stroke-linejoin="round" />
+            <path d="M9 8V6a3 3 0 0 1 6 0v2" stroke-linecap="round" />
+          </svg>
+          <span>购物车</span>
+          <span class="cart-count">{{ cartCount }}</span>
+        </a>
+      </nav>
+    </header>
+    <p class="demo-warning">已接入本人订单查询。下单、取消的登录身份与归属校验仍在迁移，请勿用于真实交易。</p>
+    <div v-if="currentView === 'products'" class="page-grid">
       <section class="catalog">
         <form class="filters" @submit.prevent="loadProducts(1)">
           <label>
@@ -240,6 +297,7 @@ onUnmounted(() => window.clearTimeout(noticeTimer))
             <div class="product-visual">
               <span>#{{ String(product.id).padStart(2, '0') }}</span>
               <strong>{{ product.name.slice(0, 1) }}</strong>
+              <small>商品图片待补充</small>
             </div>
             <div class="product-body">
               <div class="product-meta">
@@ -283,7 +341,7 @@ onUnmounted(() => window.clearTimeout(noticeTimer))
         </div>
       </section>
 
-      <aside class="cart-panel">
+      <aside :id="layout === 'storefront' ? 'storefront-cart' : undefined" class="cart-panel">
         <div class="section-heading compact">
           <div>
             <span class="eyebrow">CART</span>
@@ -333,25 +391,25 @@ onUnmounted(() => window.clearTimeout(noticeTimer))
           </button>
         </div>
       </aside>
-    </main>
+    </div>
 
-    <main v-else class="orders-page">
-      <h2>订单信息</h2>
+    <div v-else class="orders-page">
+      <h2>我的订单</h2>
 
-      <form class="order-query" @submit.prevent="loadOrders">
-        <label>
-          <span>用户 ID</span>
-          <input v-model.number="orderQueryUserId" min="1" type="number" />
-        </label>
-        <button class="primary" type="submit">查询订单</button>
-      </form>
+      <div class="order-query">
+        <p>显示当前登录账号的订单</p>
+        <button class="primary" type="button" :disabled="ordersLoading" @click="loadOrders">
+          {{ ordersLoading ? '正在加载…' : '刷新订单' }}
+        </button>
+      </div>
 
-      <div v-if="ordersLoading" class="state-card">正在加载订单...</div>
-      <div v-else-if="ordersError" class="state-card error-state">
+      <div v-if="ordersLoading" class="state-card" role="status">正在加载订单...</div>
+      <div v-else-if="ordersError" class="state-card error-state" role="alert">
         <strong>订单加载失败</strong>
         <span>{{ ordersError }}</span>
+        <button type="button" @click="loadOrders">重新加载</button>
       </div>
-      <div v-else-if="orders.length === 0" class="state-card">该用户暂无订单</div>
+      <div v-else-if="orders.length === 0" class="state-card">你还没有订单</div>
 
       <div v-else class="order-list">
         <article v-for="order in orders" :key="order.id" class="order-card">
@@ -376,7 +434,7 @@ onUnmounted(() => window.clearTimeout(noticeTimer))
           </button>
         </article>
       </div>
-    </main>
+    </div>
 
     <Transition name="toast">
       <div v-if="notice" role="status" :class="['toast', notice.tone]">
@@ -416,7 +474,7 @@ onUnmounted(() => window.clearTimeout(noticeTimer))
   line-height: 1.8;
 }
 
-.filters, .order-query {
+.filters {
   display: grid;
   grid-template-columns: minmax(180px, 1fr) 150px auto auto;
   gap: 12px;
@@ -558,7 +616,8 @@ input:focus, select:focus { border-color: var(--green); box-shadow: 0 0 0 3px rg
 .orders-page { min-height: 720px; padding: 52px; }
 .orders-hero { padding-bottom: 28px; }
 .orders-hero h1 { font-size: clamp(38px, 5vw, 64px); }
-.order-query { grid-template-columns: minmax(180px, 300px) auto; justify-content: start; }
+.order-query { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 12px; padding: 14px; border: 1px solid var(--line); border-radius: 16px; background: white; }
+.order-query p { margin: 0; color: var(--muted); font-size: 13px; }
 .order-list { display: grid; gap: 12px; margin-top: 28px; }
 
 .order-card {
@@ -605,7 +664,7 @@ input:focus, select:focus { border-color: var(--green); box-shadow: 0 0 0 3px rg
 
 .page-grid { grid-template-columns: 1fr; }
 .catalog, .orders-page { padding: 0; border: 0; min-height: auto; }
-.filters, .order-query { grid-template-columns: 1fr 1fr; padding: 14px; }
+.filters { grid-template-columns: 1fr 1fr; padding: 14px; }
 .filters label:first-child { grid-column: 1 / -1; }
 .product-grid { grid-template-columns: 1fr; }
 .product-visual { display: none; }
@@ -618,4 +677,106 @@ input:focus, select:focus { border-color: var(--green); box-shadow: 0 0 0 3px rg
 .product-body, .order-card, .cart-item { overflow-wrap: anywhere; }
 .product-action { flex-wrap: wrap; }
 .toast { position: sticky; bottom: 0; right: auto; margin-top: 16px; }
+
+/* The same commerce state can be shown as a compact drawer or a full storefront. */
+.is-storefront { min-width: 0; }
+.storefront-heading { margin-bottom: 24px; }
+.storefront-hero { display: flex; align-items: center; justify-content: space-between; gap: 32px; padding: 26px 0 38px; }
+.storefront-hero h1 { margin: 16px 0 14px; font-size: clamp(32px, 4vw, 54px); font-weight: 500; letter-spacing: -1.6px; line-height: 1.25; }
+.storefront-hero p { margin: 0; color: var(--muted); font-size: 14px; line-height: 1.8; }
+.storefront-aside { padding-left: 30px; border-left: 1px solid #dce3d9; }
+.storefront-aside > span { color: #74856f; font-size: 11px; font-weight: 600; letter-spacing: .16em; }
+.storefront-aside p { margin-top: 10px; color: #56634f; font-size: 15px; }
+.storefront-nav { display: flex; justify-content: space-between; align-items: center; gap: 16px; border-bottom: 1px solid #dde2d9; }
+.storefront-tabs { display: flex; gap: 28px; }
+.storefront-tabs button { padding: 14px 0 17px; border: 0; border-bottom: 2px solid transparent; color: var(--muted); background: transparent; font-size: 14px; }
+.storefront-tabs button.active { border-bottom-color: var(--green); color: var(--green-dark); font-weight: 600; }
+.cart-link { display: inline-flex; align-items: center; gap: 8px; min-height: 44px; color: var(--ink); font-size: 13px; text-decoration: none; }
+.cart-link:hover { color: var(--green); }
+.cart-link:focus-visible { outline: 2px solid var(--green); outline-offset: 4px; border-radius: 4px; }
+.cart-link svg { width: 20px; height: 20px; }
+.cart-count { display: grid; min-width: 23px; height: 23px; padding: 0 6px; place-content: center; border-radius: 50px; color: var(--green-dark); background: #e5eddf; font-size: 11px; font-weight: 600; }
+.is-storefront .demo-warning { margin-bottom: 26px; padding: 10px 14px; border: 1px solid #ece6d9; background: #faf7ef; color: #7d7058; }
+.is-storefront .page-grid { grid-template-columns: minmax(0, 1fr) 296px; gap: 28px; align-items: start; }
+.is-storefront .filters { grid-template-columns: minmax(0, 1fr) 126px auto auto; gap: 10px; padding: 14px; border-radius: 16px; }
+.is-storefront .filters label:first-child { grid-column: auto; }
+.is-storefront .filters label { min-width: 0; }
+.is-storefront .filters input, .is-storefront .filters select { min-width: 0; background: #f8f9f6; }
+.is-storefront .section-heading { margin: 30px 0 18px; }
+.is-storefront .section-heading h2 { margin-top: 5px; font-size: 23px; font-weight: 600; letter-spacing: -.5px; }
+.is-storefront .section-heading .eyebrow { color: #7a8475; font-size: 10px; letter-spacing: .12em; }
+.is-storefront .section-heading > span { font-size: 12px; }
+.is-storefront .product-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 16px; }
+.is-storefront .product-card { border-radius: 18px; border-color: #e3e7de; }
+.is-storefront .product-card:hover { box-shadow: 0 12px 28px #34462d0c; }
+.is-storefront .product-visual { position: relative; display: flex; height: 166px; min-height: 0; padding: 16px; color: #6b7b63; background: #edf1e6; }
+.is-storefront .product-card:nth-child(3n + 2) .product-visual { color: #8e7d65; background: #f3eee5; }
+.is-storefront .product-card:nth-child(3n) .product-visual { color: #6c8080; background: #eaf0ee; }
+.is-storefront .product-visual > span { color: inherit; font-size: 10px; letter-spacing: .04em; }
+.is-storefront .product-visual strong { position: absolute; inset: 0; display: grid; place-content: center; margin: 0; font-family: 'Microsoft YaHei', sans-serif; font-size: 52px; font-weight: 400; }
+.is-storefront .product-visual small { position: absolute; bottom: 13px; right: 14px; font-size: 10px; opacity: .85; }
+.is-storefront .product-body { display: flex; flex-direction: column; min-height: 198px; padding: 18px; }
+.is-storefront .product-meta { flex-wrap: wrap; gap: 8px; font-size: 11px; }
+.is-storefront .product-body h3 { margin: 16px 0 8px; font-size: 17px; font-weight: 600; }
+.is-storefront .product-body p { flex: 1; min-height: 43px; font-size: 12px; line-height: 1.8; }
+.is-storefront .product-action { gap: 10px; margin-top: 19px; }
+.is-storefront .product-action strong { font-size: 18px; letter-spacing: -.4px; }
+.is-storefront .product-action button { padding: 9px 11px; border: 1px solid #dfe6d9; color: #395737; background: #edf3e7; font-size: 11px; }
+.is-storefront .product-action button:hover:not(:disabled) { background: #dfead6; }
+.is-storefront .cart-panel { position: sticky; top: 24px; min-width: 0; margin-top: 0; padding: 22px; border-color: #e1e6db; border-radius: 18px; background: #fff; scroll-margin-top: 24px; }
+.is-storefront .cart-panel .section-heading { margin: 0 0 22px; }
+.is-storefront .cart-panel .section-heading h2 { font-size: 20px; }
+.is-storefront .empty-cart { min-height: 150px; padding: 20px 10px; border-color: #d9e0d1; background: #f8faf5; font-size: 13px; }
+.is-storefront .empty-cart p { font-size: 12px; }
+.is-storefront .cart-item { padding: 12px; border-radius: 12px; background: #fafbf8; font-size: 12px; }
+.is-storefront .cart-item > div:first-child { gap: 8px; }
+.is-storefront .cart-item > div:first-child > strong { min-width: 0; }
+.is-storefront .cart-item > div:first-child > span { flex-shrink: 0; }
+.is-storefront .quantity-control { gap: 8px; }
+.is-storefront .quantity-control button { flex-shrink: 0; }
+.is-storefront .cart-total strong { font-family: inherit; font-size: 24px; font-weight: 600; }
+.is-storefront .checkout-button { min-height: 48px; border-radius: 12px; font-size: 13px; }
+.is-storefront .orders-page > h2 { margin: 8px 0 20px; font-size: 23px; font-weight: 600; }
+.is-storefront .order-card { grid-template-columns: repeat(3, minmax(0, 1fr)) auto; padding: 22px; }
+.is-storefront .order-card button { grid-column: auto; }
+.is-storefront .toast { position: fixed; right: 28px; bottom: 96px; margin-top: 0; font-size: 13px; }
+
+@media (max-width: 1200px) {
+  .is-storefront .product-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .is-storefront .page-grid { gap: 22px; grid-template-columns: minmax(0, 1fr) 280px; }
+  .is-storefront .filters { grid-template-columns: minmax(0, 1fr) auto auto; }
+  .is-storefront .filters label:first-child { grid-column: 1 / -1; }
+}
+@media (max-width: 960px) {
+  .is-storefront .page-grid { grid-template-columns: minmax(0, 1fr); gap: 30px; }
+  .is-storefront .filters { grid-template-columns: minmax(0, 1fr) 126px auto auto; }
+  .is-storefront .filters label:first-child { grid-column: auto; }
+  .is-storefront .cart-panel { position: static; }
+}
+@media (max-width: 600px) {
+  .storefront-hero { padding: 12px 0 28px; }
+  .storefront-hero h1 { margin: 14px 0 10px; font-size: 32px; letter-spacing: -1px; }
+  .storefront-hero .eyebrow { font-size: 10px; }
+  .storefront-hero p { font-size: 12px; }
+  .storefront-aside { display: none; }
+  .storefront-heading { margin-bottom: 18px; }
+  .storefront-nav { gap: 10px; }
+  .storefront-tabs { gap: 21px; }
+  .storefront-tabs button { font-size: 13px; }
+  .cart-link { gap: 5px; font-size: 12px; }
+  .cart-link svg { width: 18px; height: 18px; }
+  .is-storefront .demo-warning { margin-bottom: 20px; font-size: 11px; }
+  .is-storefront .filters { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .is-storefront .filters label { grid-column: 1 / -1; }
+  .is-storefront .product-grid { grid-template-columns: minmax(0, 1fr); gap: 18px; }
+  .is-storefront .product-visual { height: 186px; }
+  .is-storefront .product-body { min-height: 0; padding: 20px; }
+  .is-storefront .product-body h3 { font-size: 18px; }
+  .is-storefront .product-action strong { font-size: 20px; }
+  .is-storefront .product-action button { font-size: 12px; }
+  .is-storefront .cart-panel { padding: 20px; }
+  .is-storefront .order-card { grid-template-columns: repeat(2, minmax(0, 1fr)); padding: 18px; gap: 20px 12px; }
+  .is-storefront .order-card button { grid-column: 1 / -1; }
+  .is-storefront .toast { right: 16px; bottom: 88px; max-width: calc(100vw - 32px); }
+}
 </style>

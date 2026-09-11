@@ -6,6 +6,7 @@ import com.nimbusds.jose.jwk.source.ImmutableJWKSet;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.context.annotation.Primary;
 import org.springframework.core.io.Resource;
 import org.springframework.security.converter.RsaKeyConverters;
 import org.springframework.security.oauth2.jwt.JwtEncoder;
@@ -15,6 +16,8 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.security.interfaces.RSAPrivateKey;
 import java.security.interfaces.RSAPublicKey;
+import java.time.Instant;
+import java.util.Objects;
 import org.springframework.security.oauth2.core.DelegatingOAuth2TokenValidator;
 import org.springframework.security.oauth2.jose.jws.SignatureAlgorithm;
 import org.springframework.security.oauth2.jwt.JwtClaimValidator;
@@ -54,6 +57,7 @@ public class JwtConfig {
     }
 
     @Bean
+    @Primary // 普通 Bearer 请求继续使用 Access Token 校验器。
     public JwtDecoder jwtDecoder(
             @Value("${smartmall.jwt.public-key}") Resource publicKeyFile
     ) throws IOException {
@@ -87,6 +91,45 @@ public class JwtConfig {
             return decoder;
 
 
+        }
+    }
+
+    @Bean
+    public JwtDecoder refreshJwtDecoder(
+            @Value("${smartmall.jwt.public-key}") Resource publicKeyFile
+    ) throws IOException {
+        try (InputStream stream = publicKeyFile.getInputStream()) {
+            RSAPublicKey publicKey = RsaKeyConverters.x509().convert(stream);
+            NimbusJwtDecoder decoder = NimbusJwtDecoder
+                    .withPublicKey(publicKey)
+                    .signatureAlgorithm(SignatureAlgorithm.RS256)
+                    .build();
+
+            // 只接受刷新用途；不能把 Access Token 当成刷新凭证。
+            JwtClaimValidator<List<String>> audienceValidator = new JwtClaimValidator<>(
+                    "aud", audiences -> List.of("smartmall-refresh").equals(audiences));
+            // 时间校验之外，明确要求 exp 存在，拒绝没有到期时间的令牌。
+            JwtClaimValidator<Instant> expiryRequired = new JwtClaimValidator<>(
+                    "exp", Objects::nonNull);
+            JwtClaimValidator<String> subjectValidator = new JwtClaimValidator<>(
+                    "sub", JwtConfig::isValidUserId);
+
+            decoder.setJwtValidator(new DelegatingOAuth2TokenValidator<>(
+                    JwtValidators.createDefaultWithIssuer("smartmall-user-service"),
+                    audienceValidator, expiryRequired, subjectValidator));
+            return decoder;
+        }
+    }
+
+    private static boolean isValidUserId(String subject) {
+        if (subject == null) {
+            return false;
+        }
+        try {
+            long userId = Long.parseLong(subject);
+            return userId > 0 && Long.toString(userId).equals(subject);
+        } catch (NumberFormatException exception) {
+            return false;
         }
     }
 }

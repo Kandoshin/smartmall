@@ -3,6 +3,8 @@ package com.smartmall.user.service;
 import com.smartmall.user.dto.*;
 import com.smartmall.user.entity.User;
 import com.smartmall.user.mapper.UserMapper;
+import org.springframework.security.oauth2.jwt.BadJwtException;
+import org.springframework.security.oauth2.jwt.Jwt;
 import org.springframework.stereotype.Service;
 import com.smartmall.user.exception.LoginFailedException;
 import java.util.List;
@@ -11,6 +13,8 @@ import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.smartmall.common.PageResult;
 import org.springframework.security.crypto.password.PasswordEncoder;
+import org.springframework.beans.factory.annotation.Qualifier;
+import org.springframework.security.oauth2.jwt.JwtDecoder;
 
 @Service
 public class UserService {
@@ -18,15 +22,18 @@ public class UserService {
     private final UserMapper userMapper;
     private final PasswordEncoder passwordEncoder;
     private final JwtService jwtService;
+    private final JwtDecoder refreshJwtDecoder;
 
     public UserService(
             UserMapper userMapper,
             PasswordEncoder passwordEncoder,
-            JwtService jwtService) {
+            JwtService jwtService,
+            @Qualifier("refreshJwtDecoder") JwtDecoder refreshJwtDecoder) {
 
         this.userMapper = userMapper;
         this.passwordEncoder = passwordEncoder;
         this.jwtService = jwtService;
+        this.refreshJwtDecoder = refreshJwtDecoder;
     }
     public long countUsers() {
         return userMapper.selectCount(null);
@@ -178,6 +185,37 @@ public class UserService {
         response.setUser(userDTO);
 
         return new LoginResultDTO(response,refreshToken);
+    }
+
+    public LoginResponse refresh(String refreshToken) {
+        long userId = verifyRefreshToken(refreshToken);
+
+        User user = userMapper.selectById(userId);
+        if (user == null) {
+            throw new BadJwtException("刷新凭证无效");
+        }
+
+        String accessToken = jwtService.createAccessToken(user.getId());
+
+        LoginResponse response = new LoginResponse();
+        response.setAccessToken(accessToken);
+        response.setExpiresIn(JwtService.ACCESS_TOKEN_TTL_SECONDS);
+        response.setUser(new UserDTO(
+                user.getId(),
+                user.getUsername(),
+                user.getEmail()
+        ));
+        return response;
+    }
+
+
+    private long verifyRefreshToken(String refreshToken) {
+        if (refreshToken == null||refreshToken.isBlank()) {
+            throw new BadJwtException("缺少刷新凭证");
+        }
+
+        Jwt verifiedJwt = refreshJwtDecoder.decode(refreshToken);
+        return Long.parseLong(verifiedJwt.getSubject());
     }
 
 }

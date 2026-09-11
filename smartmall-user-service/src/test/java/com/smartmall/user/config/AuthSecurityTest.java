@@ -15,11 +15,13 @@ import jakarta.servlet.Filter;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.NullSource;
 import org.junit.jupiter.params.provider.ValueSource;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.context.annotation.Import;
+import org.springframework.context.annotation.Primary;
 import org.springframework.core.io.ByteArrayResource;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
@@ -41,7 +43,6 @@ import tools.jackson.databind.json.JsonMapper;
 import java.nio.charset.StandardCharsets;
 import java.security.KeyPair;
 import java.security.KeyPairGenerator;
-import java.security.interfaces.RSAPublicKey;
 import java.time.Instant;
 import java.util.Base64;
 import java.util.List;
@@ -97,7 +98,7 @@ class AuthSecurityTest {
     }
 
     @Test
-    void refreshTokenHasValidSignatureDistinctAudienceAndOneDayLifetime() {
+    void refreshTokenHasValidSignatureDistinctAudienceAndOneDayLifetime() throws Exception {
         JwtDecoder verifier = context.getBean(TestConfig.class).refreshSignatureVerifier();
         Jwt decoded = verifier.decode(jwtService.createRefreshToken(42L));
         assertEquals("RS256", decoded.getHeaders().get("alg"));
@@ -200,6 +201,69 @@ class AuthSecurityTest {
     }
 
     @Test
+    void refreshReadsTheCookieIssuedByLoginWithoutBearerOrNewRefreshCookie() throws Exception {
+        LoginResponse response = new LoginResponse();
+        response.setAccessToken(jwtService.createAccessToken(42L));
+        response.setExpiresIn(JwtService.ACCESS_TOKEN_TTL_SECONDS);
+        response.setUser(new UserDTO(42L, "alice", null));
+        String token = jwtService.createRefreshToken(42L);
+        when(userService.login(any(LoginRequest.class)))
+                .thenReturn(new LoginResultDTO(response, token));
+        when(userService.refresh(token)).thenReturn(response);
+        when(userService.refresh(isNull())).thenThrow(new BadJwtException("缺少刷新凭证"));
+
+        Cookie issuedCookie = mvc.perform(csrfPost("/auth/login")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"username\":\"alice\",\"password\":\"test-password\"}"))
+                .andExpect(status().isOk()).andReturn().getResponse().getCookie("smartmall_refresh");
+        mvc.perform(csrfPost("/auth/refresh").cookie(issuedCookie))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.code").value(200))
+                .andExpect(jsonPath("$.data.accessToken").value(response.getAccessToken()))
+                .andExpect(jsonPath("$.data.expiresIn").value(900))
+                .andExpect(jsonPath("$.data.user.id").value(42))
+                .andExpect(jsonPath("$.data.refreshToken").doesNotExist())
+                .andExpect(cookie().doesNotExist("smartmall_refresh"));
+        verify(userService).refresh(token);
+        verify(userService, never()).refresh(isNull());
+    }
+
+    @Test
+    void missingRefreshCookieReachesServiceAndReturnsGeneric401WithValidCsrf() throws Exception {
+        when(userService.refresh(isNull())).thenThrow(new BadJwtException("缺少刷新凭证"));
+        mvc.perform(csrfPost("/auth/refresh"))
+                .andExpect(status().isUnauthorized())
+                .andExpect(jsonPath("$.code").value(401))
+                .andExpect(jsonPath("$.message").value("登录已失效，请重新登录"))
+                .andExpect(jsonPath("$.data").value(nullValue()))
+                .andExpect(cookie().doesNotExist("smartmall_refresh"));
+        verify(userService).refresh(isNull());
+        verifyNoMoreInteractions(userService);
+    }
+
+    @Test
+    void logoutClearsRefreshCookieWithoutAccessTokenOrBusinessCall() throws Exception {
+        String refreshToken = jwtService.createRefreshToken(42L);
+        expectLogoutSuccess(mvc.perform(csrfPost("/auth/logout")
+                .cookie(new Cookie("smartmall_refresh", refreshToken))));
+        verifyNoInteractions(userService);
+    }
+
+    @ParameterizedTest
+    @NullSource
+    @ValueSource(strings = {"", "not-a-valid-refresh-token"})
+    void logoutRemainsIdempotentWithMissingOrInvalidRefreshCookie(String refreshToken) throws Exception {
+        for (int attempt = 0; attempt < 2; attempt++) {
+            MockHttpServletRequestBuilder request = csrfPost("/auth/logout");
+            if (refreshToken != null) {
+                request.cookie(new Cookie("smartmall_refresh", refreshToken));
+            }
+            expectLogoutSuccess(mvc.perform(request));
+        }
+        verifyNoInteractions(userService);
+    }
+
+    @Test
     void blankLoginStillReturnsValidation400() throws Exception {
         mvc.perform(csrfPost("/auth/login").contentType(MediaType.APPLICATION_JSON)
                         .content("{\"username\":\"\",\"password\":\"test-password\"}"))
@@ -251,7 +315,7 @@ class AuthSecurityTest {
     }
 
     @ParameterizedTest
-    @ValueSource(strings = {"/auth/login", "/auth/register"})
+    @ValueSource(strings = {"/auth/login", "/auth/register", "/auth/refresh", "/auth/logout"})
     void invalidCsrfStopsAnonymousWritesBeforeBusinessCode(String path) throws Exception {
         CsrfPair csrf = bootstrapCsrf();
         for (MockHttpServletRequestBuilder request : List.of(
@@ -259,7 +323,8 @@ class AuthSecurityTest {
                 post(path).cookie(csrf.cookie()),
                 post(path).header("X-XSRF-TOKEN", csrf.token()),
                 post(path).cookie(csrf.cookie()).header("X-XSRF-TOKEN", "forged-token"))) {
-            var result = mvc.perform(request.contentType(MediaType.APPLICATION_JSON)
+            var result = mvc.perform(request.cookie(new Cookie("smartmall_refresh", "existing-refresh-token"))
+                            .contentType(MediaType.APPLICATION_JSON)
                             .content("{\"username\":\"alice\",\"password\":\"test-password\"}"))
                     .andExpect(status().isForbidden())
                     .andExpect(jsonPath("$.code").value(403))
@@ -282,6 +347,24 @@ class AuthSecurityTest {
     private MockHttpServletRequestBuilder csrfPost(String path) throws Exception {
         CsrfPair csrf = bootstrapCsrf();
         return post(path).cookie(csrf.cookie()).header("X-XSRF-TOKEN", csrf.token());
+    }
+
+    private void expectLogoutSuccess(ResultActions result) throws Exception {
+        var completed = result.andExpect(status().isOk())
+                .andExpect(content().contentTypeCompatibleWith(MediaType.APPLICATION_JSON))
+                .andExpect(jsonPath("$.code").value(200))
+                .andExpect(jsonPath("$.data").value(nullValue()))
+                .andExpect(cookie().value("smartmall_refresh", ""))
+                .andExpect(cookie().maxAge("smartmall_refresh", 0))
+                .andExpect(cookie().path("smartmall_refresh", "/api/auth"))
+                .andExpect(cookie().httpOnly("smartmall_refresh", true))
+                .andExpect(cookie().secure("smartmall_refresh", true))
+                .andReturn();
+        Cookie refreshCookie = completed.getResponse().getCookie("smartmall_refresh");
+        assertEquals("Strict", refreshCookie.getAttribute("SameSite"));
+        assertNull(refreshCookie.getDomain());
+        assertNull(completed.getRequest().getSession(false));
+        assertNull(completed.getResponse().getCookie("JSESSIONID"));
     }
 
     private void expectUnauthorized(ResultActions result) throws Exception {
@@ -338,8 +421,14 @@ class AuthSecurityTest {
         }
 
         @Bean
+        @Primary
         JwtDecoder jwtDecoder() throws Exception {
             return new JwtConfig().jwtDecoder(pem("PUBLIC KEY", keys.getPublic().getEncoded()));
+        }
+
+        @Bean
+        JwtDecoder refreshJwtDecoder() throws Exception {
+            return new JwtConfig().refreshJwtDecoder(pem("PUBLIC KEY", keys.getPublic().getEncoded()));
         }
 
         private static KeyPair generateKeys() {
@@ -352,15 +441,9 @@ class AuthSecurityTest {
             }
         }
 
-        // Test-only verifier: signature/issuer/time checked here; refresh audience asserted above.
-        // This is not a production refresh decoder or a Spring Bean.
-        JwtDecoder refreshSignatureVerifier() {
-            NimbusJwtDecoder decoder = NimbusJwtDecoder
-                    .withPublicKey((RSAPublicKey) keys.getPublic())
-                    .signatureAlgorithm(SignatureAlgorithm.RS256)
-                    .build();
-            decoder.setJwtValidator(JwtValidators.createDefaultWithIssuer("smartmall-user-service"));
-            return decoder;
+        // Exercise the production refresh decoder with ephemeral test keys.
+        JwtDecoder refreshSignatureVerifier() throws Exception {
+            return new JwtConfig().refreshJwtDecoder(pem("PUBLIC KEY", keys.getPublic().getEncoded()));
         }
 
         private static ByteArrayResource pem(String label, byte[] bytes) {

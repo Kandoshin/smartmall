@@ -6,8 +6,8 @@ SmartMall 是一个面向学习与作品展示的“电商 + AI”微服务项�
 
 - 用户服务：注册、BCrypt 密码校验、RSA JWT 登录、当前用户查询及统一安全错误响应；原有用户 CRUD 暂不对外开放
 - 商品服务：商品 CRUD、名称/状态筛选、分页和库存信息
-- 订单服务：跨服务查询商品、事务创建订单、订单详情、用户订单列表和取消订单
-- 商城前端：极简对话首页、居中登录弹窗、右侧个人/商品/订单抽屉；保留内存凭证、商品检索、分页、购物车和订单演示（AI 尚未接入）
+- 订单服务：跨服务查询商品、事务创建订单、订单详情、取消订单；`GET /orders/me` 已根据验证后的 JWT 查询本人订单（创建/详情/取消的归属校验待完成）
+- 商城前端：极简对话首页、右下角切换的整页商城、居中登录弹窗、右侧个人/商品/订单抽屉；共享内存身份与购物车，支持商品检索、分页和订单演示（AI 尚未接入）
 - 公共模块：统一的 `Result<T>` 和 `PageResult<T>` 响应结构
 
 ## 技术栈
@@ -34,7 +34,7 @@ cd smartmall-order-service
 mvn spring-boot:run
 ```
 
-上面的每个服务应在独立终端中从项目根目录进入对应文件夹启动。用户服务默认运行在 `8080`，商品服务为 `8081`，订单服务为 `8082`。用户服务还需要 JWT 配置指向有效的 RSA 密钥文件；私钥保持在仓库之外，不提交到 Git。
+上面的每个服务应在独立终端中从项目根目录进入对应文件夹启动。用户服务默认运行在 `8080`，商品服务为 `8081`，订单服务为 `8082`。用户服务需要 JWT 配置指向有效的 RSA 密钥文件；订单服务的 `smartmall.jwt.public-key` 必须指向对应公钥，不需要私钥。私钥保持在仓库之外，不提交到 Git。
 
 `local-http` 仅供本机回环地址的 HTTP 开发：将 `smartmall.auth.cookie-secure` 设为 `false`，让浏览器可以在本地 HTTP 请求中使用 Cookie；HttpOnly、SameSite=Strict 和 CSRF 校验仍保留。默认配置为 Secure=true，正式部署必须使用 HTTPS，不得启用该开发配置。IDE 启动时可在运行配置的 Active profiles 中填写 `local-http`。
 
@@ -51,14 +51,20 @@ npm run dev
 ### 前端登录说明
 
 - 首页只显示对话入口。未登录时必须先完成居中弹窗登录；后端身份确认成功后弹窗消失，退出或令牌过期会重新弹出。
-- 登录后点击右上角按钮展开侧边栏，可切换个人信息、商品信息和订单信息；关闭按钮、Esc 或点击抽屉外部可收起。商品/订单数据在首次进入对应分区时加载，不在未登录首页请求。
+- 登录后点击右下角“逛商城”进入整页商城首页，“回到 AI”返回对话页；切换有轻量转场并尊重系统减少动态效果设置，不刷新页面或重新登录。聊天内容、草稿、搜索与购物车在本页切换时保留；主动退出/到期清空本页身份和相关状态，重新加载页面默认回到 AI 首页。
+- 商城首页提供商品搜索、卡片列表、分页、购物车和订单入口，使用现有真实接口；目前没有分类与图片字段，不虚构分类、促销或商品照片。卡片图案是占位展示，不是商品实拍。
+- 右上角侧边栏仍可查看个人信息、商品信息和订单信息；关闭按钮、Esc 或点击抽屉外部可收起。整页商城和侧栏移动复用同一个商城组件，不各建一份购物车。商品/订单在首次进入相应入口时加载，未登录及仅停留 AI 首页时不预先加载。
 - 对话区目前仅为界面预览：Enter 发送、Shift+Enter 换行，中文输入法确认候选字不发送。预览消息不会调用 AI 或执行交易；退出/刷新清空对话。
 - 使用已注册账号登录。页面先通过同源代理领取 `/api/auth/csrf` 的校验值，再携带 `X-XSRF-TOKEN` 请求头提交登录；匹配的 HttpOnly CSRF Cookie 由浏览器自动携带。随后用 Access Token 请求 `/api/auth/me`，后者成功后才显示当前用户。登录和注册不再忽略 CSRF，手工请求步骤见 `API.md`。
-- Access Token 仅保存在页面内存，不写入 localStorage、sessionStorage、Cookie 或 URL；当前页面刷新、退出或令牌到期后仍需重新登录。CSRF Cookie 不是登录凭证，不能恢复身份。
-- 双令牌改造进行中：Service 已签发独立用途、24 小时有效的 Refresh Token，Controller 登录成功时通过 Set-Cookie 响应头发送 `smartmall_refresh`（HttpOnly、SameSite=Strict、Path=/api/auth）。刷新接口和页面自动恢复仍未实现，不代表已经支持持久登录；退出目前也尚未清除此 Cookie。
-- “确认当前身份”会再次调用 `/auth/me`，不是刷新令牌，不会延长有效期。退出只清除本页凭证，不会让已经签发的 JWT 立即失效。
-- 密码错误、后端不可用、凭证失效均显示提示，不显示 token。当前只有身份请求携带 JWT，不会自动将它发给商品/订单服务。
-- **订单仍是手填用户 ID 的教学演示，后端尚未接入身份与归属校验，不能视为已经完成用户隔离或直接对外上线。**
+- Access Token 仅保存在页面内存，不写入 localStorage、sessionStorage、Cookie 或 URL。刷新页面会丢失旧 Access Token，但有效的刷新 Cookie 可以换取新凭证恢复身份；CSRF Cookie 本身不能恢复身份。当前尚未接入页面停留期间的 Access Token 到期自动续期，到期仍提示登录。
+- Service 签发独立用途、24 小时有效的 Refresh Token，Controller 登录成功时通过 Set-Cookie 响应头发送 `smartmall_refresh`（HttpOnly、SameSite=Strict、Path=/api/auth）。POST /auth/refresh、主动退出 /auth/logout 和页面启动恢复均已实现。
+- 页面启动仅显示简洁聊天首页，在后台依次领取 CSRF、请求 refresh（Cookie 由浏览器携带、不发送 Bearer）、使用新 Access Token 查询 /auth/me；恢复期间不显示等待弹窗或登录表单，确认前侧栏和聊天输入保持禁用。成功后直接可用；401 才显示登录窗口，网络/服务异常提供重试或手动登录，不无限重试。
+- UserService.refresh 验证 Refresh Token 后按可信 ID 查询用户，用户存在才签发新 Access Token 并返回用户信息，不重新签发 Refresh Token 或延长其期限。保持登录时使用同一网址，不混用 localhost 和 127.0.0.1。
+- 主动退出已接入后端：清理本页状态，成功时浏览器删除刷新 Cookie；失败时明确提示并可重试退出。退出请求进行中禁止新登录。刷新/关闭页面不调用退出，不主动删除刷新 Cookie。
+- 个人信息不提供手动确认身份按钮；登录和页面恢复时仍自动调用 `/auth/me` 验证身份。退出不会让已经被复制的 JWT 立即失效，也不会清除其他标签页内存中的 Access Token。
+- 密码错误、后端不可用、凭证失效均显示提示，不显示 token。只有当前用户和“我的订单”请求显式携带 JWT，不全局附加给商品、登录、刷新、退出或其他订单请求。
+- “我的订单”使用 `/api/orders/me`，不再手填查询用户 ID；请求只携带当前内存 Access Token，不携带 Cookie、不缓存结果。列表 `401` 会清本页身份并显示登录窗口，网络/服务异常提供重试。退出、到期及切换账号会丢弃旧会话的未完成查询和结果。
+- **本阶段只完成本人订单列表的身份接入。创建仍使用请求 userId，详情/取消仍待归属校验；前端未给下单/取消接入 Bearer，原写操作不代表已认证交易可用，不能直接对外上线。**
 
 ## 核心调用链
 
@@ -85,4 +91,4 @@ mvn test
 
 详细接口说明见项目根目录的 `API.md`。
 
-`npm test` 使用 Node 内置测试器（当前运行环境 Node 22.15，使用实验性的 TypeScript 类型擦除选项），无需安装新的测试框架。浏览器交互检查另见 `smartmall-frontend/scripts/auth-ui-smoke.mjs`：先启动 Vite，再在具备 Playwright 和 Chrome 的环境执行该脚本；可用 `SMARTMALL_PLAYWRIGHT_MODULE` 指定环境提供的 Playwright 模块路径、`SMARTMALL_BASE_URL` 指定前端地址。该检查拦截 API 使用模拟数据，不创建数据库账号，也不替代真实服务联调；截图保存在已忽略的 `artifacts/` 下。
+`npm test` 使用 Node 内置测试器（当前运行环境 Node 22.15，使用实验性的 TypeScript 类型擦除选项），无需安装新的测试框架。浏览器交互检查见 `smartmall-frontend/scripts/auth-ui-smoke.mjs`，刷新恢复专项见 `smartmall-frontend/scripts/auth-restore-smoke.mjs`，订单身份/跨会话隔离专项见 `smartmall-frontend/scripts/order-auth-smoke.mjs`：先启动 Vite，再在具备 Playwright 和 Chrome 的环境执行脚本；可用 `SMARTMALL_PLAYWRIGHT_MODULE` 指定环境提供的 Playwright 模块路径、`SMARTMALL_BASE_URL` 指定前端地址。检查拦截 API 使用模拟数据，不创建数据库账号，也不替代真实服务联调；截图保存在已忽略的 `artifacts/` 下。

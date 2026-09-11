@@ -1,17 +1,23 @@
 <script setup lang="ts">
-import { nextTick, ref, watch } from 'vue'
+import { computed, nextTick, ref, watch } from 'vue'
 import AuthPanel from './components/AuthPanel.vue'
 import CommercePanel from './components/CommercePanel.vue'
 import ModalSurface from './components/ModalSurface.vue'
 import { useAuth } from './composables/useAuth'
 
-const { username, password, currentUser, busy, errorMessage, statusMessage,
-  handleLogin, refreshCurrentUser, logout } = useAuth()
+const { username, password, currentUser, busy, errorMessage, statusMessage, logoutNeedsRetry,
+  restoring, restoreNeedsRetry, restoreSession, handleLogin, logout, fetchMyOrders } = useAuth()
 type Section = 'profile' | 'products' | 'orders'
+const pageMode = ref<'ai' | 'mall'>('ai')
 const sidebarOpen = ref(false)
 const section = ref<Section>('profile')
 const commerceView = ref<'products' | 'orders'>('products')
 const commerceVisited = ref(false)
+// One commerce instance moves between its two display locations, keeping the same cart.
+const commerceLayout = computed(() =>
+  sidebarOpen.value && section.value !== 'profile' ? 'drawer'
+    : pageMode.value === 'mall' ? 'storefront' : 'drawer',
+)
 const composer = ref<HTMLTextAreaElement | null>(null)
 const draft = ref('')
 const messages = ref<{ id: number; text: string }[]>([])
@@ -23,6 +29,21 @@ function selectSection(value: Section) {
     commerceView.value = value
     commerceVisited.value = true
   }
+}
+
+async function togglePageMode() {
+  if (!currentUser.value) return
+  sidebarOpen.value = false
+  section.value = 'profile'
+  pageMode.value = pageMode.value === 'ai' ? 'mall' : 'ai'
+  if (pageMode.value === 'mall') {
+    commerceView.value = 'products'
+    commerceVisited.value = true
+  }
+  await nextTick()
+  window.scrollTo({ top: 0, behavior: 'auto' })
+  if (pageMode.value === 'ai') composer.value?.focus({ preventScroll: true })
+  else document.getElementById('storefront-view')?.focus({ preventScroll: true })
 }
 
 function sendMessage() {
@@ -45,6 +66,7 @@ function composerKeydown(event: KeyboardEvent) {
 
 watch(currentUser, async (user) => {
   if (!user) {
+    pageMode.value = 'ai'
     sidebarOpen.value = false
     section.value = 'profile'
     commerceVisited.value = false
@@ -58,9 +80,12 @@ watch(currentUser, async (user) => {
 </script>
 
 <template>
-  <div class="chat-shell">
+  <div :class="['chat-shell', { 'mall-mode': pageMode === 'mall' }]">
     <header class="chat-header">
-      <span class="wordmark">SmartMall<span class="wordmark-dot">.</span></span>
+      <div class="brand-lockup">
+        <span class="wordmark">SmartMall<span class="wordmark-dot">.</span></span>
+        <span v-if="pageMode === 'mall'" class="mode-caption">商城首页</span>
+      </div>
       <button class="icon-button menu-toggle" type="button" aria-label="打开侧边栏"
               aria-controls="account-sidebar" :aria-expanded="sidebarOpen"
               :disabled="!currentUser" @click="sidebarOpen = true">
@@ -70,7 +95,8 @@ watch(currentUser, async (user) => {
       </button>
     </header>
 
-    <main :class="['chat-main', { 'has-messages': messages.length }]">
+    <Transition name="page-view">
+    <main v-show="pageMode === 'ai'" id="ai-view" :class="['chat-main', { 'has-messages': messages.length }]">
       <div v-if="!messages.length" class="chat-welcome">
         <h1>今天，想找点什么？</h1>
       </div>
@@ -79,7 +105,7 @@ watch(currentUser, async (user) => {
           <p class="user-message">{{ message.text }}</p>
           <div class="assistant-message">
             <span class="assistant-mark" aria-hidden="true">S</span>
-            <p>当前是对话界面预览，尚未接入 AI，不会执行搜索、下单或退款。你可以从右上角侧边栏查看商品和订单演示。</p>
+            <p>当前是对话界面预览，尚未接入 AI，不会执行搜索、下单或退款。你可以点击右下角“逛商城”浏览商品，也可以从侧边栏查看订单演示。</p>
           </div>
         </article>
         <div class="conversation-end" />
@@ -103,6 +129,28 @@ watch(currentUser, async (user) => {
         <p class="composer-note">AI 功能尚未接入 · 当前对话仅保留在本页</p>
       </div>
     </main>
+    </Transition>
+
+    <Transition name="page-view">
+      <main v-show="pageMode === 'mall'" id="storefront-view" class="storefront-view"
+            aria-label="商城首页" tabindex="-1">
+        <div id="storefront-commerce" />
+      </main>
+    </Transition>
+
+    <button class="page-mode-toggle" type="button" :disabled="!currentUser"
+            :aria-controls="pageMode === 'ai' ? 'storefront-view' : 'ai-view'" @click="togglePageMode">
+      <svg v-if="pageMode === 'ai'" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+           stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+        <path d="M5 8h14l1 12H4L5 8Z" /><path d="M8 8V6a4 4 0 0 1 8 0v2" />
+      </svg>
+      <svg v-else viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"
+           stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+        <path d="M20 11.5a8 8 0 0 1-8 8H5l-3 2v-10a9 9 0 0 1 18 0Z" />
+        <path d="M7 11h8m-8 4h5" />
+      </svg>
+      <span>{{ pageMode === 'ai' ? '逛商城' : '回到 AI' }}</span>
+    </button>
 
     <ModalSurface :open="sidebarOpen && !!currentUser" labelledby="sidebar-title" drawer
                   @dismiss="sidebarOpen = false">
@@ -134,20 +182,28 @@ watch(currentUser, async (user) => {
           </dl>
           <p v-if="errorMessage" class="error-text" role="alert">{{ errorMessage }}</p>
           <p class="profile-status" role="status">{{ statusMessage }}</p>
-          <button class="ghost full-width" type="button" :disabled="busy" @click="refreshCurrentUser">
-            {{ busy ? '正在确认…' : '确认当前身份' }}
-          </button>
           <button class="logout-button" type="button" @click="logout">退出登录</button>
-          <p class="profile-note">登录仅保留在当前页面，刷新后需重新登录。退出仅清除本页凭证，不会撤销已签发的 JWT。</p>
+          <p class="profile-note">刷新凭证有效时，重新打开页面可恢复登录。主动退出会清除本页身份和浏览器刷新凭证，但不会撤销已经被复制的 JWT。</p>
         </section>
-        <CommercePanel v-if="currentUser && commerceVisited" v-show="section !== 'profile'"
-                       :view="commerceView" @navigate="selectSection" />
+        <div id="drawer-commerce" />
       </div>
     </ModalSurface>
 
-    <ModalSurface :open="!currentUser" labelledby="login-title" :dismissible="false">
+    <Teleport v-if="currentUser && commerceVisited"
+              :to="commerceLayout === 'storefront' ? '#storefront-commerce' : '#drawer-commerce'">
+      <CommercePanel v-show="commerceLayout === 'storefront' || section !== 'profile'"
+                     :key="currentUser.id" :fetch-orders="fetchMyOrders"
+                     :view="commerceView" :layout="commerceLayout" @navigate="selectSection" />
+    </Teleport>
+
+    <ModalSurface :open="!restoring && !currentUser" labelledby="login-title" :dismissible="false">
       <AuthPanel v-model:username="username" v-model:password="password"
                  :busy="busy" :error="errorMessage" :status="statusMessage" @submit="handleLogin" />
+      <button v-if="restoreNeedsRetry" class="ghost full-width" type="button"
+              :disabled="busy" @click="restoreSession">重试恢复登录</button>
+      <button v-if="logoutNeedsRetry" class="ghost full-width" type="button" :disabled="busy" @click="logout">
+        {{ busy ? '正在退出…' : '重试退出' }}
+      </button>
     </ModalSurface>
   </div>
 </template>

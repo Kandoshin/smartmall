@@ -20,10 +20,10 @@ defineEmits<{ submit: [] }>()
                autocomplete="current-password" placeholder="请输入密码" required :disabled="busy" />
       </label>
       <p v-if="error" class="error-text" role="alert">{{ error }}</p>
-      <button class="primary login-submit" type="submit" :disabled="busy">{{ busy ? '正在登录…' : '登录' }}</button>
+      <button class="primary login-submit" type="submit" :disabled="busy">{{ busy ? '处理中…' : '登录' }}</button>
       <p class="login-status" role="status">{{ status }}</p>
     </form>
-    <p class="login-note">请使用已注册的账号。刷新页面后需重新登录。</p>
+    <p class="login-note">请使用已注册的账号。未主动退出且刷新凭证有效时，可自动恢复登录。</p>
   </div>
 </template>
 

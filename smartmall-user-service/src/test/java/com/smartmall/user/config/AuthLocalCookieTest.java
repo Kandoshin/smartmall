@@ -1,6 +1,7 @@
 package com.smartmall.user.config;
 
 import jakarta.servlet.Filter;
+import jakarta.servlet.http.Cookie;
 import com.smartmall.user.dto.LoginRequest;
 import com.smartmall.user.dto.LoginResponse;
 import com.smartmall.user.dto.LoginResultDTO;
@@ -74,5 +75,36 @@ class AuthLocalCookieTest {
                 .andReturn();
         assertEquals("Strict", result.getResponse().getCookie("smartmall_csrf").getAttribute("SameSite"));
         assertNull(result.getRequest().getSession(false));
+    }
+
+    @Test
+    void localLogoutDeletesRefreshCookieWithoutSecureAndKeepsOtherProtections() throws Exception {
+        UserService userService = context.getBean(UserService.class);
+        reset(userService);
+        var mvc = MockMvcBuilders.webAppContextSetup(context)
+                .addFilters(context.getBean("springSecurityFilterChain", Filter.class)).build();
+        var bootstrap = mvc.perform(get("/auth/csrf")).andExpect(status().isOk()).andReturn().getResponse();
+        String csrf = JsonMapper.builder().build().readTree(bootstrap.getContentAsString())
+                .get("data").get("token").asText();
+
+        var result = mvc.perform(post("/auth/logout")
+                        .cookie(bootstrap.getCookie("smartmall_csrf"),
+                                new Cookie("smartmall_refresh", "existing-refresh-token"))
+                        .header("X-XSRF-TOKEN", csrf))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.code").value(200))
+                .andExpect(jsonPath("$.data").value(org.hamcrest.Matchers.nullValue()))
+                .andExpect(cookie().value("smartmall_refresh", ""))
+                .andExpect(cookie().maxAge("smartmall_refresh", 0))
+                .andExpect(cookie().secure("smartmall_refresh", false))
+                .andExpect(cookie().httpOnly("smartmall_refresh", true))
+                .andExpect(cookie().path("smartmall_refresh", "/api/auth"))
+                .andReturn();
+        Cookie refreshCookie = result.getResponse().getCookie("smartmall_refresh");
+        assertEquals("Strict", refreshCookie.getAttribute("SameSite"));
+        assertNull(refreshCookie.getDomain());
+        assertNull(result.getRequest().getSession(false));
+        assertNull(result.getResponse().getCookie("JSESSIONID"));
+        verifyNoInteractions(userService);
     }
 }

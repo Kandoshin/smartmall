@@ -6,9 +6,12 @@ import com.smartmall.order.dto.OrderDTO;
 import com.smartmall.order.dto.OrderDetailDTO;
 import com.smartmall.order.service.OrderService;
 import jakarta.validation.Valid;
+import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.web.bind.annotation.*;
 import java.util.List;
 import org.springframework.web.bind.annotation.RequestParam;
+import org.springframework.security.core.annotation.AuthenticationPrincipal;
+import org.springframework.security.oauth2.jwt.Jwt;
 
 @RestController
 public class OrderController {
@@ -30,8 +33,9 @@ public class OrderController {
         return Result.success(orderService.getOrderDetailById(id));
     }
 
-    @GetMapping("/orders")
-    public Result<List<OrderDTO>> list(@RequestParam Long userId){
+    @GetMapping("/orders/me")
+    public Result<List<OrderDTO>> list(@AuthenticationPrincipal Jwt jwt){
+        long userId = Long.parseLong(jwt.getSubject());
         return Result.success(orderService.getOrdersByUserId(userId));
     }
 
