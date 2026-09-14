@@ -7,11 +7,10 @@ import com.smartmall.order.dto.OrderDetailDTO;
 import com.smartmall.order.service.OrderService;
 import jakarta.validation.Valid;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
-import org.springframework.web.bind.annotation.*;
-import java.util.List;
-import org.springframework.web.bind.annotation.RequestParam;
-import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.security.oauth2.jwt.Jwt;
+import org.springframework.web.bind.annotation.*;
+
+import java.util.List;
 
 @RestController
 public class OrderController {
@@ -24,8 +23,10 @@ public class OrderController {
 
     @PostMapping("/orders")
     public Result<OrderDTO> create(
+        @AuthenticationPrincipal Jwt jwt,
         @Valid @RequestBody OrderCreateRequest request){
-        return Result.success(orderService.createOrder(request));
+        long userId = Long.parseLong(jwt.getSubject());
+        return Result.success(orderService.createOrder(userId,request));
     }
 
     @GetMapping("/orders/{id}")
@@ -40,8 +41,11 @@ public class OrderController {
     }
 
     @PatchMapping("/orders/{id}/cancel")
-    public Result<OrderDTO> cancel(@PathVariable Long id) {
-        return Result.success(orderService.cancelOrder(id));
+    public Result<OrderDTO> cancel(
+            @AuthenticationPrincipal Jwt jwt,
+            @PathVariable Long id) {
+        long userId = Long.parseLong(jwt.getSubject());
+        return Result.success(orderService.cancelOrder(userId, id));
     }
 
 }

@@ -99,9 +99,9 @@ Authorization: Bearer <accessToken>
 
 CSRF Cookie/请求头缺失或校验不匹配时，也使用上述 403 JSON，并在进入 Controller/Service 之前拒绝请求。`permitAll` 表示无需登录，不表示跳过 CSRF。安全过滤器错误不返回底层异常细节；通过 CSRF 后，登录失败、参数校验、用户不存在等错误仍由全局异常处理器生成原有的 401/400/404 响应。
 
-前端已接入上述登录和当前用户接口：`/api/auth/*` 在 Vite 开发环境代理到 8080 的 `/auth/*`。页面内存保存 accessToken，显式在 `/api/auth/me` 和 `/api/orders/me` 请求头中携带；不全局附加给其他请求。刷新页面后旧内存凭证丢失，页面会用刷新 Cookie 换取新 Access Token 恢复身份。登录或恢复后会再请求 `/auth/me`，而不是仅根据令牌响应显示已认证。
+前端已接入上述登录和当前用户接口：`/api/auth/*` 在 Vite 开发环境代理到 8080 的 `/auth/*`。页面内存保存 accessToken，显式在 `/api/auth/me`、`/api/orders/me` 和创建订单 `POST /api/orders` 请求头中携带；不全局附加给其他请求。刷新页面后旧内存凭证丢失，页面会用刷新 Cookie 换取新 Access Token 恢复身份。登录或恢复后会再请求 `/auth/me`，而不是仅根据令牌响应显示已认证。
 
-前端右下角支持在 AI 对话页与整页商城之间切换，属于本页视图切换，不产生新的登录/刷新请求。整页商城与侧栏共用购物车和“我的订单”视图。订单列表已接入下方的 `/orders/me` 并携带 Bearer，不再显示查询用户 ID 输入框；创建和取消仍处于迁移阶段，不能把列表接通视为所有订单功能已完成授权。
+前端右下角支持在 AI 对话页与整页商城之间切换，属于本页视图切换，不产生新的登录/刷新请求。整页商城与侧栏共用购物车和“我的订单”视图。订单列表、创建和取消均已携带 Bearer，不显示查询/下单用户 ID 输入框；创建请求仅发送商品明细，后端从 JWT 取身份，详情归属校验仍未完成。
 
 登录 Service 生成 `aud=smartmall-refresh`、86400 秒有效的签名 Refresh Token，内部通过 `LoginResultDTO` 交给 Controller；对外 JSON 仍只有原 `LoginResponse`。Controller 登录成功时通过 Set-Cookie 响应头发送 `smartmall_refresh`：HttpOnly、SameSite=Strict、Path=/api/auth、Max-Age=86400、不设置 Domain，默认 Secure=true（显式 local-http 开发配置为 false）。密码错误、表单校验失败或 CSRF 拒绝时不签发新的刷新 Cookie。CSRF Cookie 不是身份凭证。退出清 Cookie 与页面启动恢复已接入；角色权限及订单归属授权仍未完成。
 
@@ -274,7 +274,30 @@ All successful endpoints use `Result<T>`:
 
 订单服务已配置 Access JWT 公钥验证，并使用 Spring Boot 默认的 Bearer 安全过滤链。只接受 RS256，校验 `iss=smartmall-user-service`、`aud` 包含 `smartmall-api`、时间规则、必填 `exp` 和规范的正 Long 类型用户 ID（`sub`）。刷新用途令牌不能替代 Access Token。
 
-目前只有列表查询已从 JWT 取得用户 ID；创建订单仍读取请求中的 `userId`，详情和取消仍缺少订单归属判断。认证不等于完成这些接口的授权。订单服务的安全错误仍使用框架默认响应，尚未统一为用户服务上面的错误 JSON。前端只给列表请求接入 Bearer，未给创建和取消附加凭证；这两个写操作仍不能视为可用的已认证交易流程，页面保留迁移提示。
+列表、创建和取消订单已从 JWT 取得用户 ID。创建 Controller 把该 ID 作为独立参数交给 Service，Service 用它设置订单归属；请求 DTO 与前端 body 已移除 `userId`。取消会校验归属并做带订单 ID、用户 ID、待支付状态的条件更新。详情仍缺少归属判断，不能把认证等同于所有订单接口的授权。订单服务的安全错误仍使用框架默认响应，尚未统一为用户服务上面的错误 JSON。
+
+### 创建订单
+
+`POST /orders`，本地代理地址：`http://localhost:5173/api/orders`。
+
+请求头为 `Content-Type: application/json` 和 `Authorization: Bearer <accessToken>`。当前请求体示例：
+
+```json
+{
+  "items": [{ "productId": 1, "quantity": 1 }]
+}
+```
+
+`OrderCreateRequest` 仅包含 `items`：至少一个商品，每个商品需提供商品 ID 与大于等于 1 的数量。前端不再发送用户 ID；后端从已验证 JWT 的 `sub` 取得身份，独立传给 Service。比如 JWT 的 `sub` 为 `"7"`，附加查询参数 `?userId=8` 也不会改变订单归属。订单 Entity 与数据库中的用户 ID 字段仍保留，用于记录实际归属。
+
+当前 Boot JSON 配置会忽略多余的请求字段；隔离真实容器验证了额外发送 `"userId": 8` 仍只能按 JWT 用户 7 创建。正常客户端不应再发送这个字段。有效身份与合法商品明细返回 HTTP `200`；空商品列表、零数量、缺商品 ID 或数量返回 `400`，不会进入创建业务。
+
+前端通过 `createMyOrder` 回调调用 `createOrder`，显式携带内存 Access Token，使用 `credentials: omit` 和 `cache: no-store`；不读取刷新 Cookie、不自行解析 JWT、不创建第二套会话。成功后清空购物车并打开“我的订单”。
+
+- 提交期间禁用重复提交、增减/移除/新增购物车商品；当前空购物车不发请求。
+- `401` 清本页身份并显示登录窗口，不自动刷新、重放 POST 或清除刷新 Cookie。
+- 业务 `400` / `403` 保留登录和购物车并显示错误；网络/服务异常或无效成功响应提示先查看“我的订单”核对结果，避免重复下单。
+- 退出/到期/账号切换会取消旧请求，迟到成功或失败不能影响新会话。取消浏览器请求不等于撤销可能已写入的订单。
 
 ### 查询我的订单
 
@@ -314,11 +337,12 @@ All successful endpoints use `Result<T>`:
 
 `PATCH /orders/{id}/cancel`
 
-以下保留已有业务层契约；本阶段尚未完成此接口的归属校验及受保护 HTTP 联调。
+需要携带 Access Token：`Authorization: Bearer <accessToken>`。后端使用 JWT `sub` 作为当前用户 ID，不接收前端提供的用户 ID。
 
 - 路径参数：`id`，要取消的订单 ID。
 - 请求体：无。
-- 业务规则：只有状态为 `PENDING_PAYMENT` 的订单可以取消。
+- 业务规则：订单必须属于当前用户，并且状态为 `PENDING_PAYMENT`。不存在和不属于当前用户统一返回 `404`，避免泄露他人订单信息。
+- 写库使用订单 ID、当前用户 ID 和 `PENDING_PAYMENT` 三个条件，只更新状态字段；影响行数不是 1 时不会返回成功。
 
 取消成功时返回 HTTP `200`：
 

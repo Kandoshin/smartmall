@@ -6,7 +6,7 @@ SmartMall 是一个面向学习与作品展示的“电商 + AI”微服务项�
 
 - 用户服务：注册、BCrypt 密码校验、RSA JWT 登录、当前用户查询及统一安全错误响应；原有用户 CRUD 暂不对外开放
 - 商品服务：商品 CRUD、名称/状态筛选、分页和库存信息
-- 订单服务：跨服务查询商品、事务创建订单、订单详情、取消订单；`GET /orders/me` 已根据验证后的 JWT 查询本人订单（创建/详情/取消的归属校验待完成）
+- 订单服务：跨服务查询商品、事务创建订单、订单详情、取消订单；查询本人订单、创建和取消已使用验证后的 JWT 用户 ID，创建请求仅包含商品明细（详情归属校验待完成）
 - 商城前端：极简对话首页、右下角切换的整页商城、居中登录弹窗、右侧个人/商品/订单抽屉；共享内存身份与购物车，支持商品检索、分页和订单演示（AI 尚未接入）
 - 公共模块：统一的 `Result<T>` 和 `PageResult<T>` 响应结构
 
@@ -62,9 +62,10 @@ npm run dev
 - UserService.refresh 验证 Refresh Token 后按可信 ID 查询用户，用户存在才签发新 Access Token 并返回用户信息，不重新签发 Refresh Token 或延长其期限。保持登录时使用同一网址，不混用 localhost 和 127.0.0.1。
 - 主动退出已接入后端：清理本页状态，成功时浏览器删除刷新 Cookie；失败时明确提示并可重试退出。退出请求进行中禁止新登录。刷新/关闭页面不调用退出，不主动删除刷新 Cookie。
 - 个人信息不提供手动确认身份按钮；登录和页面恢复时仍自动调用 `/auth/me` 验证身份。退出不会让已经被复制的 JWT 立即失效，也不会清除其他标签页内存中的 Access Token。
-- 密码错误、后端不可用、凭证失效均显示提示，不显示 token。只有当前用户和“我的订单”请求显式携带 JWT，不全局附加给商品、登录、刷新、退出或其他订单请求。
+- 密码错误、后端不可用、凭证失效均显示提示，不显示 token。当前用户、“我的订单”、创建和取消订单请求显式携带 JWT，不全局附加给商品、登录、刷新或退出请求。
 - “我的订单”使用 `/api/orders/me`，不再手填查询用户 ID；请求只携带当前内存 Access Token，不携带 Cookie、不缓存结果。列表 `401` 会清本页身份并显示登录窗口，网络/服务异常提供重试。退出、到期及切换账号会丢弃旧会话的未完成查询和结果。
-- **本阶段只完成本人订单列表的身份接入。创建仍使用请求 userId，详情/取消仍待归属校验；前端未给下单/取消接入 Bearer，原写操作不代表已认证交易可用，不能直接对外上线。**
+- 下单使用同一个登录会话的 Access Token，不携带 Cookie；请求体仅发送 `items`（商品 ID、数量），不再传 `userId`，也不提供手填入口。提交期间禁用重复提交与购物车修改；成功清购物车并显示我的订单，`401` 清本页身份，业务失败保留购物车。网络/服务异常不能确定订单是否已创建，会提示先核对订单，不自动续期或重放下单请求。退出/到期丢弃旧响应，但取消浏览器请求不等于撤销后端订单。
+- **后端列表、创建和取消已使用 JWT 中的用户 ID。取消会先验证订单归属和状态，再按订单 ID、用户 ID、待支付状态做条件更新。详情仍待归属校验，因此尚不能直接对外上线。**
 
 ## 核心调用链
 
@@ -91,4 +92,4 @@ mvn test
 
 详细接口说明见项目根目录的 `API.md`。
 
-`npm test` 使用 Node 内置测试器（当前运行环境 Node 22.15，使用实验性的 TypeScript 类型擦除选项），无需安装新的测试框架。浏览器交互检查见 `smartmall-frontend/scripts/auth-ui-smoke.mjs`，刷新恢复专项见 `smartmall-frontend/scripts/auth-restore-smoke.mjs`，订单身份/跨会话隔离专项见 `smartmall-frontend/scripts/order-auth-smoke.mjs`：先启动 Vite，再在具备 Playwright 和 Chrome 的环境执行脚本；可用 `SMARTMALL_PLAYWRIGHT_MODULE` 指定环境提供的 Playwright 模块路径、`SMARTMALL_BASE_URL` 指定前端地址。检查拦截 API 使用模拟数据，不创建数据库账号，也不替代真实服务联调；截图保存在已忽略的 `artifacts/` 下。
+`npm test` 使用 Node 内置测试器（当前运行环境 Node 22.15，使用实验性的 TypeScript 类型擦除选项），无需安装新的测试框架。浏览器交互检查见 `smartmall-frontend/scripts/auth-ui-smoke.mjs`，刷新恢复专项见 `smartmall-frontend/scripts/auth-restore-smoke.mjs`，订单查询及下单身份/跨会话隔离专项分别见 `smartmall-frontend/scripts/order-auth-smoke.mjs` 和 `smartmall-frontend/scripts/checkout-auth-smoke.mjs`：先启动 Vite，再在具备 Playwright 和 Chrome 的环境执行脚本；可用 `SMARTMALL_PLAYWRIGHT_MODULE` 指定环境提供的 Playwright 模块路径、`SMARTMALL_BASE_URL` 指定前端地址。检查拦截 API 使用模拟数据，不创建数据库账号，也不替代真实服务联调；截图保存在已忽略的 `artifacts/` 下。

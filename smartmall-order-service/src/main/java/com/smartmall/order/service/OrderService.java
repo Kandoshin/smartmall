@@ -18,6 +18,7 @@ import java.util.ArrayList;
 import java.util.List;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
+import com.baomidou.mybatisplus.core.conditions.update.UpdateWrapper;
 import com.smartmall.order.dto.OrderDetailDTO;
 import com.smartmall.order.dto.OrderItemDTO;
 
@@ -37,7 +38,7 @@ public class OrderService {
     }
 
     @Transactional
-    public OrderDTO createOrder(OrderCreateRequest request) {
+    public OrderDTO createOrder(long userId,OrderCreateRequest request) {
         BigDecimal totalAmount = BigDecimal.ZERO;
         List<OrderItem> orderItems = new ArrayList<>();
 
@@ -70,7 +71,7 @@ public class OrderService {
         }
 
         Order order = new Order();
-        order.setUserId(request.getUserId());
+        order.setUserId(userId);
         order.setTotalAmount(totalAmount);
         order.setStatus("PENDING_PAYMENT");
 
@@ -142,10 +143,10 @@ public class OrderService {
     }
 
     @Transactional
-    public OrderDTO cancelOrder(Long orderId) {
+    public OrderDTO cancelOrder(long userId, Long orderId) {
         Order order = orderMapper.selectById(orderId);
 
-        if (order == null) {
+        if (order == null || order.getUserId() == null || order.getUserId().longValue() != userId) {
             throw new OrderNotFoundException(orderId);
         }
 
@@ -153,8 +154,19 @@ public class OrderService {
             throw new IllegalArgumentException("订单状态异常");
         }
 
+        UpdateWrapper<Order> updateWrapper = new UpdateWrapper<>();
+        updateWrapper
+                .eq("id", orderId)
+                .eq("user_id", userId)
+                .eq("status", "PENDING_PAYMENT")
+                .set("status", "CANCELLED");
+
+        int updatedRows = orderMapper.update(null, updateWrapper);
+        if (updatedRows != 1) {
+            throw new IllegalArgumentException("订单状态已变化，请刷新后重试");
+        }
+
         order.setStatus("CANCELLED");
-        orderMapper.updateById(order);
 
         return new OrderDTO(
                 order.getId(),

@@ -1,11 +1,7 @@
 <script setup lang="ts">
 import { computed, onUnmounted, ref, watch } from 'vue'
-import {
-  cancelOrder as cancelOrderRequest,
-  createOrder,
-  getProducts,
-} from '../api'
-import type { CartItem, OrderSummary, Product } from '../types'
+import { getProducts } from '../api'
+import type { CartItem, OrderCreateItem, OrderSummary, Product } from '../types'
 
 type ViewName = 'products' | 'orders'
 type Notice = { message: string; tone: 'success' | 'error' }
@@ -14,6 +10,8 @@ const props = withDefaults(defineProps<{
   view: ViewName
   layout?: 'drawer' | 'storefront'
   fetchOrders: (signal?: AbortSignal) => Promise<OrderSummary[]>
+  createOrder: (items: OrderCreateItem[], signal?: AbortSignal) => Promise<OrderSummary>
+  cancelOrder: (orderId: number, signal?: AbortSignal) => Promise<OrderSummary>
 }>(), { layout: 'drawer' })
 const emit = defineEmits<{ navigate: [view: ViewName] }>()
 const currentView = computed(() => props.view)
@@ -27,12 +25,13 @@ const totalPages = ref(1)
 const totalProducts = ref(0)
 
 const cart = ref<CartItem[]>([])
-const checkoutUserId = ref(1)
 const checkoutLoading = ref(false)
+let pendingCheckout: AbortController | null = null
 
 const orders = ref<OrderSummary[]>([])
 const ordersLoading = ref(false)
 const ordersError = ref('')
+const cancellingOrderIds = ref<number[]>([])
 const notice = ref<Notice | null>(null)
 let noticeTimer: number | undefined
 let pendingOrders: AbortController | null = null
@@ -101,6 +100,7 @@ function resetFilters() {
 }
 
 function addToCart(product: Product) {
+  if (checkoutLoading.value) return
   const existing = cart.value.find((item) => item.id === product.id)
 
   if (existing) {
@@ -118,6 +118,7 @@ function addToCart(product: Product) {
 }
 
 function changeQuantity(item: CartItem, change: number) {
+  if (checkoutLoading.value) return
   const nextQuantity = item.quantity + change
   if (nextQuantity < 1) {
     removeFromCart(item.id)
@@ -127,38 +128,40 @@ function changeQuantity(item: CartItem, change: number) {
 }
 
 function removeFromCart(productId: number) {
+  if (checkoutLoading.value) return
   cart.value = cart.value.filter((item) => item.id !== productId)
 }
 
 async function checkout() {
+  if (checkoutLoading.value) return
   if (cart.value.length === 0) {
     showNotice('请先选择商品', 'error')
     return
   }
-  if (!Number.isInteger(checkoutUserId.value) || checkoutUserId.value < 1) {
-    showNotice('请输入有效的用户 ID', 'error')
-    return
-  }
-
+  const controller = new AbortController()
+  pendingCheckout = controller
   checkoutLoading.value = true
   try {
-    const order = await createOrder(
-      checkoutUserId.value,
+    const order = await props.createOrder(
       cart.value.map((item) => ({
         productId: item.id,
         quantity: item.quantity,
       })),
+      controller.signal,
     )
+    if (controller.signal.aborted) return
     cart.value = []
     showNotice(`订单 #${order.id} 创建成功`, 'success')
     emit('navigate', 'orders')
   } catch (error) {
+    if (controller.signal.aborted) return
     showNotice(
       error instanceof Error ? error.message : '创建订单失败',
       'error',
     )
   } finally {
     checkoutLoading.value = false
+    pendingCheckout = null
   }
 }
 
@@ -193,8 +196,10 @@ async function loadOrders() {
 }
 
 async function handleCancelOrder(order: OrderSummary) {
+  if (cancellingOrderIds.value.includes(order.id)) return
+  cancellingOrderIds.value = [...cancellingOrderIds.value, order.id]
   try {
-    const updatedOrder = await cancelOrderRequest(order.id)
+    const updatedOrder = await props.cancelOrder(order.id)
     order.status = updatedOrder.status
     showNotice(`订单 #${order.id} 已取消`, 'success')
   } catch (error) {
@@ -202,6 +207,8 @@ async function handleCancelOrder(order: OrderSummary) {
       error instanceof Error ? error.message : '取消订单失败',
       'error',
     )
+  } finally {
+    cancellingOrderIds.value = cancellingOrderIds.value.filter(id => id !== order.id)
   }
 }
 
@@ -212,6 +219,7 @@ watch(() => props.view, (view) => {
 }, { immediate: true })
 
 onUnmounted(() => {
+  pendingCheckout?.abort()
   window.clearTimeout(noticeTimer)
   cancelPendingOrders()
 })
@@ -256,7 +264,7 @@ onUnmounted(() => {
         </a>
       </nav>
     </header>
-    <p class="demo-warning">已接入本人订单查询。下单、取消的登录身份与归属校验仍在迁移，请勿用于真实交易。</p>
+    <p class="demo-warning">查询、下单和取消已使用登录身份；订单详情的归属校验仍待完善，请勿用于真实交易。</p>
     <div v-if="currentView === 'products'" class="page-grid">
       <section class="catalog">
         <form class="filters" @submit.prevent="loadProducts(1)">
@@ -312,7 +320,7 @@ onUnmounted(() => {
                 <strong>{{ formatPrice(product.price) }}</strong>
                 <button
                   type="button"
-                  :disabled="product.status !== 1 || product.stock < 1"
+                  :disabled="checkoutLoading || product.status !== 1 || product.stock < 1"
                   @click="addToCart(product)"
                 >
                   加入购物车
@@ -362,10 +370,10 @@ onUnmounted(() => {
               <span>{{ formatPrice(item.price) }}</span>
             </div>
             <div class="quantity-control">
-              <button type="button" @click="changeQuantity(item, -1)">−</button>
+              <button type="button" :disabled="checkoutLoading" @click="changeQuantity(item, -1)">−</button>
               <span>{{ item.quantity }}</span>
-              <button type="button" @click="changeQuantity(item, 1)">+</button>
-              <button class="remove" type="button" @click="removeFromCart(item.id)">
+              <button type="button" :disabled="checkoutLoading" @click="changeQuantity(item, 1)">+</button>
+              <button class="remove" type="button" :disabled="checkoutLoading" @click="removeFromCart(item.id)">
                 移除
               </button>
             </div>
@@ -373,10 +381,6 @@ onUnmounted(() => {
         </div>
 
         <div class="checkout-box">
-          <label>
-            <span>下单用户 ID</span>
-            <input v-model.number="checkoutUserId" min="1" type="number" />
-          </label>
           <div class="cart-total">
             <span>合计</span>
             <strong>{{ formatPrice(cartTotal) }}</strong>
@@ -427,10 +431,10 @@ onUnmounted(() => {
           </div>
           <button
             type="button"
-            :disabled="order.status !== 'PENDING_PAYMENT'"
+            :disabled="order.status !== 'PENDING_PAYMENT' || cancellingOrderIds.includes(order.id)"
             @click="handleCancelOrder(order)"
           >
-            {{ order.status === 'PENDING_PAYMENT' ? '取消订单' : '不可取消' }}
+            {{ cancellingOrderIds.includes(order.id) ? '取消中…' : order.status === 'PENDING_PAYMENT' ? '取消订单' : '不可取消' }}
           </button>
         </article>
       </div>

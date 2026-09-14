@@ -6,7 +6,7 @@ import ModalSurface from './components/ModalSurface.vue'
 import { useAuth } from './composables/useAuth'
 
 const { username, password, currentUser, busy, errorMessage, statusMessage, logoutNeedsRetry,
-  restoring, restoreNeedsRetry, restoreSession, handleLogin, logout, fetchMyOrders } = useAuth()
+  restoring, restoreNeedsRetry, restoreSession, handleLogin, logout, fetchMyOrders, createMyOrder, cancelMyOrder } = useAuth()
 type Section = 'profile' | 'products' | 'orders'
 const pageMode = ref<'ai' | 'mall'>('ai')
 const sidebarOpen = ref(false)
@@ -192,7 +192,8 @@ watch(currentUser, async (user) => {
     <Teleport v-if="currentUser && commerceVisited"
               :to="commerceLayout === 'storefront' ? '#storefront-commerce' : '#drawer-commerce'">
       <CommercePanel v-show="commerceLayout === 'storefront' || section !== 'profile'"
-                     :key="currentUser.id" :fetch-orders="fetchMyOrders"
+                     :key="currentUser.id" :fetch-orders="fetchMyOrders" :create-order="createMyOrder"
+                     :cancel-order="cancelMyOrder"
                      :view="commerceView" :layout="commerceLayout" @navigate="selectSection" />
     </Teleport>
 

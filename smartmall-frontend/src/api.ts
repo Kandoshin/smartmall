@@ -144,18 +144,27 @@ export function getProducts(params: {
   return request<PageResult<Product>>(`/api/products?${query.toString()}`)
 }
 
-export function createOrder(userId: number, items: OrderCreateItem[]) {
+// Identity travels only in the Bearer token; the body describes the purchase.
+export function createOrder(accessToken: string, items: OrderCreateItem[], signal?: AbortSignal) {
   return request<OrderSummary>('/api/orders', {
     method: 'POST',
+    credentials: 'omit',
+    cache: 'no-store',
     headers: {
       'Content-Type': 'application/json',
+      Authorization: `Bearer ${accessToken}`,
     },
-    body: JSON.stringify({ userId, items }),
+    body: JSON.stringify({ items }),
+    signal,
   })
 }
 
-export function cancelOrder(orderId: number) {
+export function cancelOrder(accessToken: string, orderId: number, signal?: AbortSignal) {
   return request<OrderSummary>(`/api/orders/${orderId}/cancel`, {
     method: 'PATCH',
+    credentials: 'omit',
+    cache: 'no-store',
+    headers: { Authorization: `Bearer ${accessToken}` },
+    signal,
   })
 }

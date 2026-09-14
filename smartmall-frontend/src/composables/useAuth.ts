@@ -1,6 +1,6 @@
 import { onMounted, onUnmounted, ref } from 'vue'
-import { ApiError, getCurrentUser, getMyOrders, login, logoutSession, refreshSession } from '../api'
-import type { LoginResponse, User } from '../types'
+import { ApiError, cancelOrder, createOrder, getCurrentUser, getMyOrders, login, logoutSession, refreshSession } from '../api'
+import type { LoginResponse, OrderCreateItem, User } from '../types'
 
 export function useAuth() {
   const username = ref('')
@@ -68,6 +68,65 @@ export function useAuth() {
       if (!requestSignal.aborted && version === requestVersion
         && error instanceof ApiError && error.status === 401) {
         expireSession()
+      }
+      throw error
+    }
+  }
+
+  async function createMyOrder(items: OrderCreateItem[], signal?: AbortSignal) {
+    if (!accessToken || !currentUser.value || Date.now() >= expiresAt) {
+      if (currentUser.value) expireSession()
+      throw new ApiError(401, '登录已失效，请重新登录')
+    }
+
+    const version = requestVersion
+    const requestSignal = signal
+      ? AbortSignal.any([signal, sessionRequests.signal])
+      : sessionRequests.signal
+    try {
+      const order = await createOrder(accessToken, items, requestSignal)
+      requestSignal.throwIfAborted()
+      if (!order || !Number.isSafeInteger(order.id) || order.id <= 0
+        || !Number.isFinite(order.totalAmount) || typeof order.status !== 'string' || !order.status) {
+        throw new ApiError(0, '订单响应格式异常')
+      }
+      return order
+    } catch (error) {
+      if (!requestSignal.aborted && version === requestVersion && error instanceof ApiError) {
+        if (error.status === 401) expireSession()
+        if (error.status === 0 || error.status >= 500 || (error.status >= 200 && error.status < 300)) {
+          // A lost response does not mean the server failed to create the order. Never replay POST.
+          throw new ApiError(error.status, '未能确认是否下单成功，请先到“我的订单”核对，避免重复下单')
+        }
+      }
+      throw error
+    }
+  }
+
+  async function cancelMyOrder(orderId: number, signal?: AbortSignal) {
+    if (!accessToken || !currentUser.value || Date.now() >= expiresAt) {
+      if (currentUser.value) expireSession()
+      throw new ApiError(401, '登录已失效，请重新登录')
+    }
+
+    const version = requestVersion
+    const requestSignal = signal
+      ? AbortSignal.any([signal, sessionRequests.signal])
+      : sessionRequests.signal
+    try {
+      const order = await cancelOrder(accessToken, orderId, requestSignal)
+      requestSignal.throwIfAborted()
+      if (!order || order.id !== orderId || !Number.isFinite(order.totalAmount)
+        || typeof order.status !== 'string' || !order.status) {
+        throw new ApiError(0, '订单响应格式异常')
+      }
+      return order
+    } catch (error) {
+      if (!requestSignal.aborted && version === requestVersion && error instanceof ApiError) {
+        if (error.status === 401) expireSession()
+        if (error.status === 0 || error.status >= 500 || (error.status >= 200 && error.status < 300)) {
+          throw new ApiError(error.status, '未能确认是否取消成功，请刷新“我的订单”核对状态')
+        }
       }
       throw error
     }
@@ -212,5 +271,5 @@ export function useAuth() {
   })
 
   return { username, password, currentUser, busy, errorMessage, statusMessage, logoutNeedsRetry,
-    restoring, restoreNeedsRetry, restoreSession, handleLogin, logout, fetchMyOrders }
+    restoring, restoreNeedsRetry, restoreSession, handleLogin, logout, fetchMyOrders, createMyOrder, cancelMyOrder }
 }
