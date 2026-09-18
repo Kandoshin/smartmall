@@ -1,27 +1,54 @@
 <script setup lang="ts">
-import { computed, nextTick, ref, watch } from 'vue'
+import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
 import AuthPanel from './components/AuthPanel.vue'
 import CommercePanel from './components/CommercePanel.vue'
 import ModalSurface from './components/ModalSurface.vue'
 import { useAuth } from './composables/useAuth'
 
 const { username, password, currentUser, busy, errorMessage, statusMessage, logoutNeedsRetry,
-  restoring, restoreNeedsRetry, restoreSession, handleLogin, logout, fetchMyOrders, createMyOrder, cancelMyOrder } = useAuth()
+  restoring, restoreNeedsRetry, restoreSession, handleLogin, logout, fetchMyOrders, fetchOrderDetail,
+  createMyOrder, cancelMyOrder, chatWithAi } = useAuth()
 type Section = 'profile' | 'products' | 'orders'
 const pageMode = ref<'ai' | 'mall'>('ai')
 const sidebarOpen = ref(false)
 const section = ref<Section>('profile')
 const commerceView = ref<'products' | 'orders'>('products')
 const commerceVisited = ref(false)
-// One commerce instance moves between its two display locations, keeping the same cart.
+// One commerce instance moves between its two display locations, keeping the same product/order state.
 const commerceLayout = computed(() =>
   sidebarOpen.value && section.value !== 'profile' ? 'drawer'
     : pageMode.value === 'mall' ? 'storefront' : 'drawer',
 )
 const composer = ref<HTMLTextAreaElement | null>(null)
+const conversation = ref<HTMLElement | null>(null)
 const draft = ref('')
-const messages = ref<{ id: number; text: string }[]>([])
+const messages = ref<{
+  id: number
+  userText: string
+  assistantText: string
+  pending: boolean
+  error: boolean
+}[]>([])
+const chatBusy = ref(false)
+let activeChat: AbortController | null = null
 let messageId = 0
+
+function resizeComposer() {
+  const textarea = composer.value
+  if (!textarea) return
+
+  const maximumHeight = Math.max(96, Math.floor(window.innerHeight / 2))
+  textarea.style.height = '0px'
+  const contentHeight = textarea.scrollHeight
+  textarea.style.height = `${Math.min(contentHeight, maximumHeight)}px`
+  textarea.style.overflowY = contentHeight > maximumHeight ? 'auto' : 'hidden'
+}
+
+function scrollToLatest(behavior: ScrollBehavior = 'smooth') {
+  const chat = conversation.value
+  if (!chat) return
+  chat.scrollTo({ top: chat.scrollHeight, behavior })
+}
 
 function selectSection(value: Section) {
   section.value = value
@@ -42,30 +69,77 @@ async function togglePageMode() {
   }
   await nextTick()
   window.scrollTo({ top: 0, behavior: 'auto' })
-  if (pageMode.value === 'ai') composer.value?.focus({ preventScroll: true })
+  if (pageMode.value === 'ai') {
+    resizeComposer()
+    scrollToLatest('auto')
+    composer.value?.focus({ preventScroll: true })
+  }
   else document.getElementById('storefront-view')?.focus({ preventScroll: true })
 }
 
-function sendMessage() {
+async function sendMessage() {
   const text = draft.value.trim()
-  if (!currentUser.value || !text) return
-  messages.value.push({ id: ++messageId, text })
+  if (!currentUser.value || !text || chatBusy.value) return
+  const message = {
+    id: ++messageId,
+    userText: text,
+    assistantText: '',
+    pending: true,
+    error: false,
+  }
+  messages.value.push(message)
   draft.value = ''
-  void nextTick(() => {
-    document.querySelector('.conversation-end')?.scrollIntoView({ behavior: 'smooth', block: 'end' })
-    composer.value?.focus()
-  })
+  chatBusy.value = true
+  const chatController = new AbortController()
+  activeChat = chatController
+  await nextTick()
+  resizeComposer()
+  scrollToLatest()
+
+  try {
+    message.assistantText = await chatWithAi(text, chatController.signal)
+  } catch (error) {
+    if (chatController.signal.aborted) return
+    message.error = true
+    message.assistantText = error instanceof Error ? error.message : 'AI 暂时无法回复，请稍后重试'
+  } finally {
+    message.pending = false
+    if (activeChat === chatController) {
+      activeChat = null
+      chatBusy.value = false
+    }
+    await nextTick()
+    scrollToLatest()
+    composer.value?.focus({ preventScroll: true })
+  }
 }
 
 function composerKeydown(event: KeyboardEvent) {
   if (event.key === 'Enter' && !event.shiftKey && !event.isComposing) {
     event.preventDefault()
-    sendMessage()
+    void sendMessage()
   }
 }
 
+watch(draft, async () => {
+  await nextTick()
+  resizeComposer()
+})
+
+onMounted(() => {
+  resizeComposer()
+  window.addEventListener('resize', resizeComposer)
+})
+
+onUnmounted(() => {
+  window.removeEventListener('resize', resizeComposer)
+})
+
 watch(currentUser, async (user) => {
   if (!user) {
+    activeChat?.abort()
+    activeChat = null
+    chatBusy.value = false
     pageMode.value = 'ai'
     sidebarOpen.value = false
     section.value = 'profile'
@@ -100,33 +174,34 @@ watch(currentUser, async (user) => {
       <div v-if="!messages.length" class="chat-welcome">
         <h1>今天，想找点什么？</h1>
       </div>
-      <section v-else class="conversation" aria-label="当前对话" aria-live="polite">
+      <section v-else ref="conversation" class="conversation" aria-label="当前对话" aria-live="polite">
         <article v-for="message in messages" :key="message.id" class="message-pair">
-          <p class="user-message">{{ message.text }}</p>
+          <p class="user-message">{{ message.userText }}</p>
           <div class="assistant-message">
             <span class="assistant-mark" aria-hidden="true">S</span>
-            <p>当前是对话界面预览，尚未接入 AI，不会执行搜索、下单或退款。你可以点击右下角“逛商城”浏览商品，也可以从侧边栏查看订单演示。</p>
+            <p :class="{ 'chat-error': message.error }">
+              {{ message.pending ? '正在思考…' : message.assistantText }}
+            </p>
           </div>
         </article>
-        <div class="conversation-end" />
       </section>
 
       <div class="composer-area">
         <form class="composer" @submit.prevent="sendMessage">
           <label class="sr-only" for="chat-input">发送消息</label>
           <textarea id="chat-input" ref="composer" v-model="draft" rows="2" maxlength="4000"
-                    placeholder="说说你需要什么…" :disabled="!currentUser" @keydown="composerKeydown" />
+                    placeholder="说说你需要什么…" :disabled="!currentUser || chatBusy" @keydown="composerKeydown" />
           <div class="composer-bottom">
             <span>SmartMall · 对话购物</span>
             <button class="send-button" type="submit" aria-label="发送消息"
-                    :disabled="!currentUser || !draft.trim()">
+                    :disabled="!currentUser || !draft.trim() || chatBusy">
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
                 <path d="M12 19V5m-6 6 6-6 6 6" />
               </svg>
             </button>
           </div>
         </form>
-        <p class="composer-note">AI 功能尚未接入 · 当前对话仅保留在本页</p>
+        <p class="composer-note">AI 可查询在售商品和你的订单 · 当前对话仅保留在本页</p>
       </div>
     </main>
     </Transition>
@@ -192,7 +267,8 @@ watch(currentUser, async (user) => {
     <Teleport v-if="currentUser && commerceVisited"
               :to="commerceLayout === 'storefront' ? '#storefront-commerce' : '#drawer-commerce'">
       <CommercePanel v-show="commerceLayout === 'storefront' || section !== 'profile'"
-                     :key="currentUser.id" :fetch-orders="fetchMyOrders" :create-order="createMyOrder"
+                     :key="currentUser.id" :fetch-orders="fetchMyOrders" :fetch-order-detail="fetchOrderDetail"
+                     :create-order="createMyOrder"
                      :cancel-order="cancelMyOrder"
                      :view="commerceView" :layout="commerceLayout" @navigate="selectSection" />
     </Teleport>

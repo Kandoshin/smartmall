@@ -41,25 +41,26 @@ label > span { display: block; margin-bottom: 8px; font-size: 13px; color: #5358
 .icon-button { width: 42px; height: 42px; display: grid; place-items: center; padding: 10px; border: 0; border-radius: 12px; background: transparent; color: #535854; }
 .icon-button:hover:not(:disabled) { background: #f1f2f0; }
 svg { width: 24px; height: 24px; }
-.chat-main { width: min(760px, calc(100% - 40px)); min-height: calc(100dvh - 80px); margin: auto; display: flex; flex-direction: column; justify-content: center; padding: 0 0 13vh; }
+.chat-main { width: min(760px, calc(100% - 40px)); height: calc(100dvh - 80px); min-height: 0; margin: auto; display: flex; flex-direction: column; justify-content: center; overflow: hidden; padding: 0 0 13vh; }
 .chat-welcome h1 { text-align: center; font-size: clamp(24px, 3vw, 32px); font-weight: 500; letter-spacing: -.8px; margin: 0 0 34px; }
 .composer { border: 1px solid #e4e5e3; border-radius: 24px; padding: 18px 16px 12px; background: #f7f8f6; box-shadow: 0 4px 18px #00000003; }
 .composer:focus-within { border-color: #b5bdb6; }
-.composer textarea { display: block; width: 100%; min-height: 56px; max-height: 200px; padding: 0 4px; border: 0; outline: none; resize: vertical; background: transparent; color: var(--ink); font-size: 16px; line-height: 1.7; }
+.composer textarea { display: block; width: 100%; min-height: 56px; max-height: 50dvh; padding: 0 4px; border: 0; outline: none; resize: none; overflow-y: hidden; background: transparent; color: var(--ink); font-size: 16px; line-height: 1.7; }
 .composer textarea:focus-visible { outline: none; }
 .composer textarea::placeholder { color: #878c86; }
 .composer-bottom { display: flex; justify-content: space-between; align-items: center; margin-top: 8px; }
 .composer-bottom > span { font-size: 12px; color: #767d76; padding-left: 4px; }
 .send-button { display: grid; place-items: center; width: 36px; height: 36px; padding: 6px; border: 0; border-radius: 50%; background: #292d2a; color: white; }
 .composer-note { text-align: center; font-size: 11px; color: #858984; margin: 14px 0 0; }
-.has-messages { justify-content: flex-start; padding-bottom: 100px; }
-.conversation { flex: 1; padding: 32px 0; }
+.has-messages { justify-content: stretch; padding-bottom: 0; }
+.conversation { flex: 1; min-height: 0; overflow-y: auto; overscroll-behavior: contain; scrollbar-gutter: stable; scroll-behavior: smooth; padding: 32px 4px 24px; }
 .message-pair { margin-bottom: 30px; }
 .user-message { width: fit-content; max-width: 85%; margin: 0 0 24px auto; background: #f0f2ee; padding: 12px 18px; border-radius: 20px; white-space: pre-wrap; overflow-wrap: anywhere; line-height: 1.7; }
 .assistant-message { display: flex; gap: 14px; align-items: flex-start; }
 .assistant-mark { flex: 0 0 28px; height: 28px; display: grid; place-items: center; background: #edf2eb; border-radius: 8px; color: #32765b; font-size: 15px; }
 .assistant-message p { margin: 1px 0 0; font-size: 14px; line-height: 1.9; color: #626862; }
-.has-messages .composer-area { position: sticky; bottom: 84px; background: white; padding-top: 12px; padding-bottom: 10px; }
+.assistant-message p.chat-error { color: #a13d35; }
+.has-messages .composer-area { flex: 0 0 auto; background: white; padding-top: 12px; padding-bottom: 18px; }
 .drawer-heading { display: flex; align-items: center; justify-content: space-between; margin-bottom: 24px; }
 .drawer-heading h2 { font-size: 19px; font-weight: 600; margin: 0; }
 .drawer-nav { display: flex; padding: 5px; gap: 4px; background: #f3f4f1; border-radius: 12px; margin-bottom: 30px; }
@@ -81,8 +82,8 @@ svg { width: 24px; height: 24px; }
 @media (max-width: 600px) {
   .chat-header { height: 64px; padding: 0 18px; }
   .wordmark { font-size: 19px; }
-  .chat-main { width: calc(100% - 32px); min-height: calc(100dvh - 64px); padding-bottom: 12vh; }
-  .has-messages { padding-bottom: 96px; }
+  .chat-main { width: calc(100% - 32px); height: calc(100dvh - 64px); min-height: 0; padding-bottom: 12vh; }
+  .has-messages { padding-bottom: 0; }
   .chat-welcome h1 { margin-bottom: 28px; }
   .storefront-view { padding: 18px 16px 112px; min-height: calc(100dvh - 64px); }
   .page-mode-toggle { right: 16px; bottom: max(16px, env(safe-area-inset-bottom)); min-width: 122px; min-height: 48px; padding: 12px 18px; }

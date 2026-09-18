@@ -5,7 +5,7 @@ import { ApiError, createOrder, getProducts, login, refreshSession, logoutSessio
 afterEach(() => mock.restoreAll())
 
 const items = [{ productId: 2, quantity: 3 }]
-const order = { id: 107, totalAmount: 299.9, status: 'PENDING_PAYMENT' }
+const order = { id: 107, totalAmount: 299.9, status: 'NORMAL' }
 const ok = () => Response.json({ code: 200, message: '操作成功', data: order })
 
 test('checkout explicitly sends Access Bearer and items-only JSON without cookies or identity in URL/body', async () => {

@@ -1,10 +1,10 @@
 # SmartMall Frontend
 
-SmartMall 的 Vue 3 + TypeScript 前端，提供商品查询、购物车、创建订单、用户订单查询和取消订单功能。
+SmartMall 的 Vue 3 + TypeScript 前端，提供 AI 对话、商品查询、立即购买、用户订单查询和取消订单功能。
 
 ## 启动
 
-先启动商品服务（8081）和订单服务（8082），再执行：
+先启动用户服务（8080）、商品服务（8081）、订单服务（8082）和 AI 服务（8084），再执行：
 
 ```powershell
 npm install

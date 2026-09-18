@@ -38,17 +38,31 @@ export type Product = {
   status: number
 }
 
-export type CartItem = Product & {
-  quantity: number
-}
-
 export type OrderSummary = {
   id: number
   totalAmount: number
   status: string
 }
 
+export type OrderItemDetail = {
+  productId: number
+  productName: string
+  unitPrice: number
+  quantity: number
+  subtotal: number
+}
+
+export type OrderDetail = OrderSummary & {
+  userId: number
+  createdAt: string | null
+  items: OrderItemDetail[]
+}
+
 export type OrderCreateItem = {
   productId: number
   quantity: number
+}
+
+export type ChatResponse = {
+  answer: string
 }

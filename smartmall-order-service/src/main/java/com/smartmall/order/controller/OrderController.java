@@ -30,8 +30,11 @@ public class OrderController {
     }
 
     @GetMapping("/orders/{id}")
-    public Result<OrderDetailDTO> get(@PathVariable long id){
-        return Result.success(orderService.getOrderDetailById(id));
+    public Result<OrderDetailDTO> get(
+            @AuthenticationPrincipal Jwt jwt,
+            @PathVariable long id){
+        long userId = Long.parseLong(jwt.getSubject());
+        return Result.success(orderService.getOrderDetailById(userId, id));
     }
 
     @GetMapping("/orders/me")

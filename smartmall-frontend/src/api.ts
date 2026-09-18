@@ -1,13 +1,17 @@
 import type {
   ApiResult,
+  ChatResponse,
   LoginRequest,
   LoginResponse,
+  OrderDetail,
   OrderCreateItem,
   OrderSummary,
   PageResult,
   Product,
   User,
 } from './types'
+
+type RequestOptions = RequestInit & { timeoutMs?: number }
 
 export class ApiError extends Error {
   status: number
@@ -19,15 +23,16 @@ export class ApiError extends Error {
   }
 }
 
-async function request<T>(url: string, options?: RequestInit): Promise<T> {
+async function request<T>(url: string, options?: RequestOptions): Promise<T> {
   options?.signal?.throwIfAborted()
+  const { timeoutMs = 10000, ...fetchOptions } = options ?? {}
   let response: Response
   try {
     response = await fetch(url, {
-      ...options,
+      ...fetchOptions,
       signal: options?.signal
-        ? AbortSignal.any([options.signal, AbortSignal.timeout(10000)])
-        : AbortSignal.timeout(10000),
+        ? AbortSignal.any([options.signal, AbortSignal.timeout(timeoutMs)])
+        : AbortSignal.timeout(timeoutMs),
     })
   } catch (error) {
     if (options?.signal?.aborted) throw error
@@ -123,6 +128,15 @@ export function getMyOrders(accessToken: string, signal?: AbortSignal) {
   })
 }
 
+export function getOrderDetail(accessToken: string, orderId: number, signal?: AbortSignal) {
+  return request<OrderDetail>(`/api/orders/${orderId}`, {
+    headers: { Authorization: `Bearer ${accessToken}` },
+    credentials: 'omit',
+    cache: 'no-store',
+    signal,
+  })
+}
+
 export function getProducts(params: {
   name: string
   status: string
@@ -166,5 +180,20 @@ export function cancelOrder(accessToken: string, orderId: number, signal?: Abort
     cache: 'no-store',
     headers: { Authorization: `Bearer ${accessToken}` },
     signal,
+  })
+}
+
+export function sendChatMessage(accessToken: string, message: string, signal?: AbortSignal) {
+  return request<ChatResponse>('/api/chat', {
+    method: 'POST',
+    credentials: 'omit',
+    cache: 'no-store',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${accessToken}`,
+    },
+    body: JSON.stringify({ message }),
+    signal,
+    timeoutMs: 65000,
   })
 }

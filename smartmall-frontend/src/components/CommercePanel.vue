@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, onUnmounted, ref, watch } from 'vue'
 import { getProducts } from '../api'
-import type { CartItem, OrderCreateItem, OrderSummary, Product } from '../types'
+import type { OrderCreateItem, OrderDetail, OrderSummary, Product } from '../types'
 
 type ViewName = 'products' | 'orders'
 type Notice = { message: string; tone: 'success' | 'error' }
@@ -10,6 +10,7 @@ const props = withDefaults(defineProps<{
   view: ViewName
   layout?: 'drawer' | 'storefront'
   fetchOrders: (signal?: AbortSignal) => Promise<OrderSummary[]>
+  fetchOrderDetail: (orderId: number, signal?: AbortSignal) => Promise<OrderDetail>
   createOrder: (items: OrderCreateItem[], signal?: AbortSignal) => Promise<OrderSummary>
   cancelOrder: (orderId: number, signal?: AbortSignal) => Promise<OrderSummary>
 }>(), { layout: 'drawer' })
@@ -24,7 +25,6 @@ const currentPage = ref(1)
 const totalPages = ref(1)
 const totalProducts = ref(0)
 
-const cart = ref<CartItem[]>([])
 const checkoutLoading = ref(false)
 let pendingCheckout: AbortController | null = null
 
@@ -36,14 +36,11 @@ const notice = ref<Notice | null>(null)
 let noticeTimer: number | undefined
 let pendingOrders: AbortController | null = null
 let ordersVersion = 0
-
-const cartCount = computed(() =>
-  cart.value.reduce((sum, item) => sum + item.quantity, 0),
-)
-
-const cartTotal = computed(() =>
-  cart.value.reduce((sum, item) => sum + item.price * item.quantity, 0),
-)
+const selectedOrderId = ref<number | null>(null)
+const orderDetail = ref<OrderDetail | null>(null)
+const orderDetailLoading = ref(false)
+const orderDetailError = ref('')
+let pendingOrderDetail: AbortController | null = null
 
 function formatPrice(value: number) {
   return new Intl.NumberFormat('zh-CN', {
@@ -54,12 +51,18 @@ function formatPrice(value: number) {
 
 function formatOrderStatus(status: string) {
   const labels: Record<string, string> = {
-    PENDING_PAYMENT: '待支付',
+    NORMAL: '正常',
     PAID: '已支付',
     CANCELLED: '已取消',
     COMPLETED: '已完成',
   }
   return labels[status] ?? status
+}
+
+function formatDate(value: string | null) {
+  if (!value) return '时间未知'
+  const date = new Date(value)
+  return Number.isNaN(date.getTime()) ? value : date.toLocaleString('zh-CN')
 }
 
 function showNotice(message: string, tone: Notice['tone']) {
@@ -99,43 +102,10 @@ function resetFilters() {
   void loadProducts(1)
 }
 
-function addToCart(product: Product) {
+async function purchase(product: Product) {
   if (checkoutLoading.value) return
-  const existing = cart.value.find((item) => item.id === product.id)
-
-  if (existing) {
-    if (existing.quantity < product.stock) {
-      existing.quantity += 1
-    } else {
-      showNotice(`${product.name} 已达到库存上限`, 'error')
-      return
-    }
-  } else {
-    cart.value.push({ ...product, quantity: 1 })
-  }
-
-  showNotice(`${product.name} 已加入购物车`, 'success')
-}
-
-function changeQuantity(item: CartItem, change: number) {
-  if (checkoutLoading.value) return
-  const nextQuantity = item.quantity + change
-  if (nextQuantity < 1) {
-    removeFromCart(item.id)
-    return
-  }
-  item.quantity = Math.min(nextQuantity, item.stock)
-}
-
-function removeFromCart(productId: number) {
-  if (checkoutLoading.value) return
-  cart.value = cart.value.filter((item) => item.id !== productId)
-}
-
-async function checkout() {
-  if (checkoutLoading.value) return
-  if (cart.value.length === 0) {
-    showNotice('请先选择商品', 'error')
+  if (product.status !== 1 || product.stock < 1) {
+    showNotice('商品当前不可购买', 'error')
     return
   }
   const controller = new AbortController()
@@ -143,14 +113,10 @@ async function checkout() {
   checkoutLoading.value = true
   try {
     const order = await props.createOrder(
-      cart.value.map((item) => ({
-        productId: item.id,
-        quantity: item.quantity,
-      })),
+      [{ productId: product.id, quantity: 1 }],
       controller.signal,
     )
     if (controller.signal.aborted) return
-    cart.value = []
     showNotice(`订单 #${order.id} 创建成功`, 'success')
     emit('navigate', 'orders')
   } catch (error) {
@@ -195,6 +161,39 @@ async function loadOrders() {
   }
 }
 
+function closeOrderDetail() {
+  pendingOrderDetail?.abort()
+  pendingOrderDetail = null
+  selectedOrderId.value = null
+  orderDetail.value = null
+  orderDetailError.value = ''
+  orderDetailLoading.value = false
+}
+
+function reloadOrderDetail() {
+  if (selectedOrderId.value === null) return
+  void showOrderDetail({ id: selectedOrderId.value, totalAmount: 0, status: '' })
+}
+
+async function showOrderDetail(order: OrderSummary) {
+  closeOrderDetail()
+  selectedOrderId.value = order.id
+  orderDetailLoading.value = true
+  const controller = new AbortController()
+  pendingOrderDetail = controller
+  try {
+    orderDetail.value = await props.fetchOrderDetail(order.id, controller.signal)
+  } catch (error) {
+    if (controller.signal.aborted) return
+    orderDetailError.value = error instanceof Error ? error.message : '订单详情加载失败'
+  } finally {
+    if (pendingOrderDetail === controller) {
+      pendingOrderDetail = null
+      orderDetailLoading.value = false
+    }
+  }
+}
+
 async function handleCancelOrder(order: OrderSummary) {
   if (cancellingOrderIds.value.includes(order.id)) return
   cancellingOrderIds.value = [...cancellingOrderIds.value, order.id]
@@ -215,11 +214,15 @@ async function handleCancelOrder(order: OrderSummary) {
 watch(() => props.view, (view) => {
   if (view === 'products' && products.value.length === 0) void loadProducts()
   if (view === 'orders') void loadOrders()
-  else cancelPendingOrders()
+  else {
+    cancelPendingOrders()
+    closeOrderDetail()
+  }
 }, { immediate: true })
 
 onUnmounted(() => {
   pendingCheckout?.abort()
+  pendingOrderDetail?.abort()
   window.clearTimeout(noticeTimer)
   cancelPendingOrders()
 })
@@ -254,17 +257,9 @@ onUnmounted(() => {
             @click="emit('navigate', 'orders')"
           >订单记录</button>
         </div>
-        <a v-if="currentView === 'products'" class="cart-link" href="#storefront-cart">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true">
-            <path d="M5 7h14l1 14H4L5 7Z" stroke-linejoin="round" />
-            <path d="M9 8V6a3 3 0 0 1 6 0v2" stroke-linecap="round" />
-          </svg>
-          <span>购物车</span>
-          <span class="cart-count">{{ cartCount }}</span>
-        </a>
       </nav>
     </header>
-    <p class="demo-warning">查询、下单和取消已使用登录身份；订单详情的归属校验仍待完善，请勿用于真实交易。</p>
+    <p class="demo-warning">查询、立即购买、订单详情和取消均使用登录身份；当前为演示版交易流程。</p>
     <div v-if="currentView === 'products'" class="page-grid">
       <section class="catalog">
         <form class="filters" @submit.prevent="loadProducts(1)">
@@ -321,9 +316,9 @@ onUnmounted(() => {
                 <button
                   type="button"
                   :disabled="checkoutLoading || product.status !== 1 || product.stock < 1"
-                  @click="addToCart(product)"
+                  @click="purchase(product)"
                 >
-                  加入购物车
+                  {{ checkoutLoading ? '正在创建订单...' : '立即购买' }}
                 </button>
               </div>
             </div>
@@ -349,52 +344,6 @@ onUnmounted(() => {
         </div>
       </section>
 
-      <aside :id="layout === 'storefront' ? 'storefront-cart' : undefined" class="cart-panel">
-        <div class="section-heading compact">
-          <div>
-            <span class="eyebrow">CART</span>
-            <h2>购物车</h2>
-          </div>
-          <span>{{ cartCount }} 件</span>
-        </div>
-
-        <div v-if="cart.length === 0" class="empty-cart">
-          <span>购物袋还是空的</span>
-          <p>选择一个商品加入购物车。</p>
-        </div>
-
-        <div v-else class="cart-items">
-          <article v-for="item in cart" :key="item.id" class="cart-item">
-            <div>
-              <strong>{{ item.name }}</strong>
-              <span>{{ formatPrice(item.price) }}</span>
-            </div>
-            <div class="quantity-control">
-              <button type="button" :disabled="checkoutLoading" @click="changeQuantity(item, -1)">−</button>
-              <span>{{ item.quantity }}</span>
-              <button type="button" :disabled="checkoutLoading" @click="changeQuantity(item, 1)">+</button>
-              <button class="remove" type="button" :disabled="checkoutLoading" @click="removeFromCart(item.id)">
-                移除
-              </button>
-            </div>
-          </article>
-        </div>
-
-        <div class="checkout-box">
-          <div class="cart-total">
-            <span>合计</span>
-            <strong>{{ formatPrice(cartTotal) }}</strong>
-          </div>
-          <button
-            class="checkout-button"
-            type="button"
-            :disabled="checkoutLoading || cart.length === 0"
-            @click="checkout"
-          >
-            {{ checkoutLoading ? '正在创建订单...' : '提交订单' }}
-          </button>
-        </div>
-      </aside>
     </div>
 
     <div v-else class="orders-page">
@@ -431,13 +380,47 @@ onUnmounted(() => {
           </div>
           <button
             type="button"
-            :disabled="order.status !== 'PENDING_PAYMENT' || cancellingOrderIds.includes(order.id)"
+            :disabled="order.status !== 'NORMAL' || cancellingOrderIds.includes(order.id)"
             @click="handleCancelOrder(order)"
           >
-            {{ cancellingOrderIds.includes(order.id) ? '取消中…' : order.status === 'PENDING_PAYMENT' ? '取消订单' : '不可取消' }}
+            {{ cancellingOrderIds.includes(order.id) ? '取消中…' : order.status === 'NORMAL' ? '取消订单' : '不可取消' }}
           </button>
+          <button class="detail-button" type="button" @click="showOrderDetail(order)">查看详情</button>
         </article>
       </div>
+    </div>
+
+    <div v-if="selectedOrderId !== null" class="detail-backdrop" role="presentation" @click.self="closeOrderDetail">
+      <section class="order-detail-dialog" role="dialog" aria-modal="true" aria-labelledby="order-detail-title">
+        <div class="detail-heading">
+          <div>
+            <span class="eyebrow">ORDER DETAIL</span>
+            <h2 id="order-detail-title">订单 #{{ selectedOrderId }}</h2>
+          </div>
+          <button class="icon-button" type="button" aria-label="关闭订单详情" @click="closeOrderDetail">×</button>
+        </div>
+        <div v-if="orderDetailLoading" class="state-card" role="status">正在加载订单详情...</div>
+        <div v-else-if="orderDetailError" class="state-card error-state" role="alert">
+          <strong>订单详情加载失败</strong>
+          <span>{{ orderDetailError }}</span>
+          <button type="button" @click="reloadOrderDetail">重新加载</button>
+        </div>
+        <template v-else-if="orderDetail">
+          <div class="detail-summary">
+            <div><span>状态</span><strong>{{ formatOrderStatus(orderDetail.status) }}</strong></div>
+            <div><span>订单金额</span><strong>{{ formatPrice(orderDetail.totalAmount) }}</strong></div>
+            <div><span>创建时间</span><strong>{{ formatDate(orderDetail.createdAt) }}</strong></div>
+          </div>
+          <div class="detail-items">
+            <h3>商品明细</h3>
+            <div v-for="item in orderDetail.items" :key="`${item.productId}-${item.productName}`" class="detail-item">
+              <div><strong>{{ item.productName }}</strong><span>商品 #{{ item.productId }}</span></div>
+              <div><span>{{ formatPrice(item.unitPrice) }} × {{ item.quantity }}</span><strong>{{ formatPrice(item.subtotal) }}</strong></div>
+            </div>
+            <p v-if="orderDetail.items.length === 0" class="detail-empty">该订单没有商品明细。</p>
+          </div>
+        </template>
+      </section>
     </div>
 
     <Transition name="toast">
@@ -449,8 +432,8 @@ onUnmounted(() => {
 </template>
 
 <style scoped>
-.page-grid { display: grid; grid-template-columns: minmax(0, 1fr) 360px; }
-.catalog { min-width: 0; padding: 52px; border-right: 1px solid var(--line); }
+.page-grid { display: grid; grid-template-columns: minmax(0, 1fr); }
+.catalog { min-width: 0; padding: 52px; }
 .hero-copy { max-width: 850px; padding: 24px 0 46px; }
 
 .eyebrow {
@@ -581,16 +564,7 @@ input:focus, select:focus { border-color: var(--green); box-shadow: 0 0 0 3px rg
 .pagination { display: flex; align-items: center; justify-content: center; gap: 16px; margin-top: 26px; color: var(--muted); font-size: 13px; }
 .pagination button { padding: 8px 13px; border: 1px solid var(--line); border-radius: 10px; background: white; }
 
-.cart-panel {
-  position: sticky;
-  top: 0;
-  align-self: start;
-  min-height: 720px;
-  padding: 38px 28px;
-  background: #f7f5ed;
-}
-
-.empty-cart, .state-card {
+.state-card {
   display: grid;
   min-height: 150px;
   place-content: center;
@@ -602,21 +576,6 @@ input:focus, select:focus { border-color: var(--green); box-shadow: 0 0 0 3px rg
   text-align: center;
 }
 
-.empty-cart span { color: var(--ink); font-weight: 700; }
-.empty-cart p { margin: 0; font-size: 13px; }
-.cart-items { display: grid; gap: 12px; }
-.cart-item { padding: 16px; border: 1px solid var(--line); border-radius: 16px; background: white; }
-.cart-item > div:first-child { display: flex; justify-content: space-between; gap: 12px; }
-.cart-item span { color: var(--muted); font-size: 13px; }
-.quantity-control { display: flex; align-items: center; gap: 9px; margin-top: 14px; }
-.quantity-control button { width: 30px; height: 30px; border: 1px solid var(--line); border-radius: 9px; background: #f7f6f0; }
-.quantity-control .remove { width: auto; margin-left: auto; padding: 0 8px; border: 0; color: var(--danger); background: transparent; font-size: 12px; }
-
-.checkout-box { display: grid; gap: 18px; margin-top: 28px; padding-top: 24px; border-top: 1px solid var(--line); }
-.cart-total { display: flex; align-items: center; justify-content: space-between; }
-.cart-total strong { font-family: Georgia, serif; font-size: 28px; }
-.checkout-button { min-height: 52px; border: 0; border-radius: 14px; color: white; background: var(--green); font-weight: 700; }
-
 .orders-page { min-height: 720px; padding: 52px; }
 .orders-hero { padding-bottom: 28px; }
 .orders-hero h1 { font-size: clamp(38px, 5vw, 64px); }
@@ -626,7 +585,7 @@ input:focus, select:focus { border-color: var(--green); box-shadow: 0 0 0 3px rg
 
 .order-card {
   display: grid;
-  grid-template-columns: 1fr 1fr 1fr auto;
+  grid-template-columns: 1fr 1fr 1fr auto auto;
   align-items: center;
   gap: 24px;
   padding: 20px 22px;
@@ -641,6 +600,42 @@ input:focus, select:focus { border-color: var(--green); box-shadow: 0 0 0 3px rg
 .state-card { margin-top: 24px; }
 .error-state { color: var(--danger); background: #fff7f3; }
 .state-card button { justify-self: center; margin-top: 8px; }
+.detail-button { grid-column: auto; border: 1px solid var(--line) !important; color: var(--ink) !important; background: white !important; }
+.detail-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 30;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  background: rgba(23, 35, 29, .35);
+}
+.order-detail-dialog {
+  width: min(620px, 100%);
+  max-height: min(760px, calc(100vh - 48px));
+  overflow: auto;
+  padding: 26px;
+  border: 1px solid var(--line);
+  border-radius: 22px;
+  background: #fffdf8;
+  box-shadow: 0 24px 70px rgba(23, 35, 29, .25);
+}
+.detail-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 20px; }
+.detail-heading h2 { margin: 8px 0 0; font-size: 27px; }
+.detail-heading .icon-button { flex-shrink: 0; font-size: 25px; }
+.detail-summary { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; margin-top: 24px; }
+.detail-summary > div { padding: 14px; border: 1px solid var(--line); border-radius: 14px; background: white; }
+.detail-summary span, .detail-summary strong { display: block; }
+.detail-summary span { margin-bottom: 7px; color: var(--muted); font-size: 12px; }
+.detail-summary strong { overflow-wrap: anywhere; font-size: 13px; }
+.detail-items { margin-top: 24px; }
+.detail-items h3 { margin: 0 0 12px; font-size: 16px; }
+.detail-item { display: flex; align-items: center; justify-content: space-between; gap: 18px; padding: 14px 0; border-top: 1px solid var(--line); }
+.detail-item > div { display: grid; gap: 5px; }
+.detail-item > div:last-child { justify-items: end; }
+.detail-item span { color: var(--muted); font-size: 12px; }
+.detail-item strong { overflow-wrap: anywhere; }
+.detail-empty { color: var(--muted); font-size: 13px; }
 
 .toast {
   position: fixed;
@@ -662,7 +657,6 @@ input:focus, select:focus { border-color: var(--green); box-shadow: 0 0 0 3px rg
 @media (max-width: 1050px) {
   .page-grid { grid-template-columns: 1fr; }
   .catalog { border-right: 0; }
-  .cart-panel { position: static; min-height: auto; border-top: 1px solid var(--line); }
 }
 
 
@@ -674,11 +668,10 @@ input:focus, select:focus { border-color: var(--green); box-shadow: 0 0 0 3px rg
 .product-visual { display: none; }
 .section-heading { margin-top: 26px; }
 .section-heading h2 { font-size: 20px; }
-.cart-panel { position: static; min-height: auto; margin-top: 24px; padding: 20px; border: 1px solid var(--line); border-radius: 16px; background: #fafafa; }
 .order-card { grid-template-columns: 1fr 1fr; gap: 16px; padding: 16px; }
 .order-card button { grid-column: 1 / -1; }
 .demo-warning { color: #855c2a; background: #fbf6ed; padding: 12px; border-radius: 10px; font-size: 12px; line-height: 1.7; margin: 0 0 20px; }
-.product-body, .order-card, .cart-item { overflow-wrap: anywhere; }
+.product-body, .order-card { overflow-wrap: anywhere; }
 .product-action { flex-wrap: wrap; }
 .toast { position: sticky; bottom: 0; right: auto; margin-top: 16px; }
 
@@ -695,13 +688,8 @@ input:focus, select:focus { border-color: var(--green); box-shadow: 0 0 0 3px rg
 .storefront-tabs { display: flex; gap: 28px; }
 .storefront-tabs button { padding: 14px 0 17px; border: 0; border-bottom: 2px solid transparent; color: var(--muted); background: transparent; font-size: 14px; }
 .storefront-tabs button.active { border-bottom-color: var(--green); color: var(--green-dark); font-weight: 600; }
-.cart-link { display: inline-flex; align-items: center; gap: 8px; min-height: 44px; color: var(--ink); font-size: 13px; text-decoration: none; }
-.cart-link:hover { color: var(--green); }
-.cart-link:focus-visible { outline: 2px solid var(--green); outline-offset: 4px; border-radius: 4px; }
-.cart-link svg { width: 20px; height: 20px; }
-.cart-count { display: grid; min-width: 23px; height: 23px; padding: 0 6px; place-content: center; border-radius: 50px; color: var(--green-dark); background: #e5eddf; font-size: 11px; font-weight: 600; }
 .is-storefront .demo-warning { margin-bottom: 26px; padding: 10px 14px; border: 1px solid #ece6d9; background: #faf7ef; color: #7d7058; }
-.is-storefront .page-grid { grid-template-columns: minmax(0, 1fr) 296px; gap: 28px; align-items: start; }
+.is-storefront .page-grid { grid-template-columns: minmax(0, 1fr); gap: 28px; align-items: start; }
 .is-storefront .filters { grid-template-columns: minmax(0, 1fr) 126px auto auto; gap: 10px; padding: 14px; border-radius: 16px; }
 .is-storefront .filters label:first-child { grid-column: auto; }
 .is-storefront .filters label { min-width: 0; }
@@ -727,27 +715,14 @@ input:focus, select:focus { border-color: var(--green); box-shadow: 0 0 0 3px rg
 .is-storefront .product-action strong { font-size: 18px; letter-spacing: -.4px; }
 .is-storefront .product-action button { padding: 9px 11px; border: 1px solid #dfe6d9; color: #395737; background: #edf3e7; font-size: 11px; }
 .is-storefront .product-action button:hover:not(:disabled) { background: #dfead6; }
-.is-storefront .cart-panel { position: sticky; top: 24px; min-width: 0; margin-top: 0; padding: 22px; border-color: #e1e6db; border-radius: 18px; background: #fff; scroll-margin-top: 24px; }
-.is-storefront .cart-panel .section-heading { margin: 0 0 22px; }
-.is-storefront .cart-panel .section-heading h2 { font-size: 20px; }
-.is-storefront .empty-cart { min-height: 150px; padding: 20px 10px; border-color: #d9e0d1; background: #f8faf5; font-size: 13px; }
-.is-storefront .empty-cart p { font-size: 12px; }
-.is-storefront .cart-item { padding: 12px; border-radius: 12px; background: #fafbf8; font-size: 12px; }
-.is-storefront .cart-item > div:first-child { gap: 8px; }
-.is-storefront .cart-item > div:first-child > strong { min-width: 0; }
-.is-storefront .cart-item > div:first-child > span { flex-shrink: 0; }
-.is-storefront .quantity-control { gap: 8px; }
-.is-storefront .quantity-control button { flex-shrink: 0; }
-.is-storefront .cart-total strong { font-family: inherit; font-size: 24px; font-weight: 600; }
-.is-storefront .checkout-button { min-height: 48px; border-radius: 12px; font-size: 13px; }
 .is-storefront .orders-page > h2 { margin: 8px 0 20px; font-size: 23px; font-weight: 600; }
-.is-storefront .order-card { grid-template-columns: repeat(3, minmax(0, 1fr)) auto; padding: 22px; }
+.is-storefront .order-card { grid-template-columns: repeat(3, minmax(0, 1fr)) auto auto; padding: 22px; }
 .is-storefront .order-card button { grid-column: auto; }
 .is-storefront .toast { position: fixed; right: 28px; bottom: 96px; margin-top: 0; font-size: 13px; }
 
 @media (max-width: 1200px) {
   .is-storefront .product-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-  .is-storefront .page-grid { gap: 22px; grid-template-columns: minmax(0, 1fr) 280px; }
+  .is-storefront .page-grid { gap: 22px; grid-template-columns: minmax(0, 1fr); }
   .is-storefront .filters { grid-template-columns: minmax(0, 1fr) auto auto; }
   .is-storefront .filters label:first-child { grid-column: 1 / -1; }
 }
@@ -755,7 +730,6 @@ input:focus, select:focus { border-color: var(--green); box-shadow: 0 0 0 3px rg
   .is-storefront .page-grid { grid-template-columns: minmax(0, 1fr); gap: 30px; }
   .is-storefront .filters { grid-template-columns: minmax(0, 1fr) 126px auto auto; }
   .is-storefront .filters label:first-child { grid-column: auto; }
-  .is-storefront .cart-panel { position: static; }
 }
 @media (max-width: 600px) {
   .storefront-hero { padding: 12px 0 28px; }
@@ -767,8 +741,6 @@ input:focus, select:focus { border-color: var(--green); box-shadow: 0 0 0 3px rg
   .storefront-nav { gap: 10px; }
   .storefront-tabs { gap: 21px; }
   .storefront-tabs button { font-size: 13px; }
-  .cart-link { gap: 5px; font-size: 12px; }
-  .cart-link svg { width: 18px; height: 18px; }
   .is-storefront .demo-warning { margin-bottom: 20px; font-size: 11px; }
   .is-storefront .filters { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .is-storefront .filters label { grid-column: 1 / -1; }
@@ -778,9 +750,13 @@ input:focus, select:focus { border-color: var(--green); box-shadow: 0 0 0 3px rg
   .is-storefront .product-body h3 { font-size: 18px; }
   .is-storefront .product-action strong { font-size: 20px; }
   .is-storefront .product-action button { font-size: 12px; }
-  .is-storefront .cart-panel { padding: 20px; }
   .is-storefront .order-card { grid-template-columns: repeat(2, minmax(0, 1fr)); padding: 18px; gap: 20px 12px; }
-  .is-storefront .order-card button { grid-column: 1 / -1; }
+  .is-storefront .order-card button { grid-column: auto; }
+  .detail-backdrop { padding: 14px; }
+  .order-detail-dialog { padding: 20px; border-radius: 18px; }
+  .detail-summary { grid-template-columns: 1fr; }
+  .detail-item { align-items: flex-start; flex-direction: column; gap: 10px; }
+  .detail-item > div:last-child { justify-items: start; }
   .is-storefront .toast { right: 16px; bottom: 88px; max-width: calc(100vw - 32px); }
 }
 </style>

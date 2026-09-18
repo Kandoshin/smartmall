@@ -73,7 +73,7 @@ public class OrderService {
         Order order = new Order();
         order.setUserId(userId);
         order.setTotalAmount(totalAmount);
-        order.setStatus("PENDING_PAYMENT");
+        order.setStatus("NORMAL");
 
         orderMapper.insert(order);
 
@@ -90,10 +90,12 @@ public class OrderService {
 
     }
 
-    public OrderDetailDTO getOrderDetailById(long orderId){
+    public OrderDetailDTO getOrderDetailById(long userId, long orderId){
         Order order = orderMapper.selectById(orderId);
 
-        if (order == null) {
+        if (order == null
+                || order.getUserId() == null
+                || order.getUserId().longValue() != userId) {
             throw new OrderNotFoundException(orderId);
         }
 
@@ -150,7 +152,7 @@ public class OrderService {
             throw new OrderNotFoundException(orderId);
         }
 
-        if (!"PENDING_PAYMENT".equals(order.getStatus())) {
+        if (!"NORMAL".equals(order.getStatus())) {
             throw new IllegalArgumentException("订单状态异常");
         }
 
@@ -158,7 +160,7 @@ public class OrderService {
         updateWrapper
                 .eq("id", orderId)
                 .eq("user_id", userId)
-                .eq("status", "PENDING_PAYMENT")
+                .eq("status", "NORMAL")
                 .set("status", "CANCELLED");
 
         int updatedRows = orderMapper.update(null, updateWrapper);

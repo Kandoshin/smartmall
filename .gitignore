@@ -1,6 +1,7 @@
 # Maven build output
 target/
 */target/
+out/
 
 # IntelliJ IDEA
 .idea/
@@ -17,6 +18,9 @@ target/
 # Java runtime and logs
 *.log
 hs_err_pid*
+
+# Local experiments and temporary tests
+/test/
 
 # Local environment and secrets
 .env

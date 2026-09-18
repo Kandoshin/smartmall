@@ -45,7 +45,7 @@ class OrderCreationServiceTest {
         verify(orderMapper).insert(savedOrder.capture());
         assertEquals(userId, savedOrder.getValue().getUserId().longValue());
         assertEquals(new BigDecimal("25.30"), savedOrder.getValue().getTotalAmount());
-        assertEquals("PENDING_PAYMENT", savedOrder.getValue().getStatus());
+        assertEquals("NORMAL", savedOrder.getValue().getStatus());
 
         ArgumentCaptor<OrderItem> savedItems = ArgumentCaptor.forClass(OrderItem.class);
         verify(orderItemMapper, times(2)).insert(savedItems.capture());
@@ -67,7 +67,7 @@ class OrderCreationServiceTest {
         );
         assertEquals(generatedId, result.getId().longValue());
         assertEquals(new BigDecimal("25.30"), result.getTotalAmount());
-        assertEquals("PENDING_PAYMENT", result.getStatus());
+        assertEquals("NORMAL", result.getStatus());
         verify(productClient).getProductById(1L);
         verify(productClient).getProductById(2L);
         verifyNoMoreInteractions(productClient, orderMapper, orderItemMapper);

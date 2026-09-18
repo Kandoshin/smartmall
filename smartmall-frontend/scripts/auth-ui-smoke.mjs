@@ -30,7 +30,8 @@ let productMode = 'success'
 let lastProductName = ''
 let orderCalls = 0
 let orderMode = 'empty'
-const fixtureOrder = { id: 7, totalAmount: 299.9, status: 'PENDING_PAYMENT' }
+let chatCalls = 0
+const fixtureOrder = { id: 7, totalAmount: 299.9, status: 'NORMAL' }
 let credentialLeak = false
 const json = (route, status, data, message = '操作成功') => route.fulfill({
   status, contentType: 'application/json', body: JSON.stringify({ code: status, message, data }),
@@ -79,6 +80,14 @@ await context.route('**/api/orders**', route => {
   assert.ok(['Bearer browser-test-token', 'Bearer browser-restored-token'].includes(route.request().headers().authorization))
   if (orderMode === 'failed') return json(route, 500, null, '订单服务暂不可用')
   return json(route, 200, orderMode === 'fixture' ? [fixtureOrder] : [])
+})
+await context.route('**/api/chat', route => {
+  chatCalls += 1
+  assert.equal(route.request().method(), 'POST')
+  assert.ok(['Bearer browser-test-token', 'Bearer browser-restored-token'].includes(route.request().headers().authorization))
+  assert.equal((route.request().headers().cookie || '').includes('smartmall_refresh'), false)
+  const { message } = route.request().postDataJSON()
+  return json(route, 200, { answer: `AI 测试回复：${message}` })
 })
 await context.route('**/api/auth/csrf', route => {
   assert.equal(route.request().method(), 'GET')
@@ -252,12 +261,9 @@ try {
   await page.getByRole('button', { name: '刷新订单', exact: true }).click()
   await page.getByText('订单服务暂不可用', { exact: true }).waitFor()
   await page.getByRole('button', { name: '商品信息', exact: true }).click()
-  await page.getByRole('button', { name: '加入购物车', exact: true }).click()
-  await page.getByRole('button', { name: '提交订单', exact: true }).click()
+   await page.getByRole('button', { name: '立即购买', exact: true }).click()
   await page.getByRole('status').filter({ hasText: '下单请求被拒绝' }).waitFor()
-  assert.equal(await page.locator('.cart-item').count(), 1)
-  assert.equal(await page.locator('.quantity-control > span').innerText(), '1')
-  await page.getByRole('button', { name: '移除', exact: true }).click()
+   assert.equal(await page.getByRole('heading', { name: '机械键盘' }).isVisible(), true)
   orderMode = 'fixture'
   await page.getByRole('button', { name: '订单信息', exact: true }).click()
   await page.getByRole('button', { name: '刷新订单', exact: true }).click()
@@ -281,9 +287,39 @@ try {
   await chat.press('Shift+Enter')
   assert.equal((await chat.inputValue()).includes('\n'), true)
   await chat.press('Enter')
-  await page.getByText('当前是对话界面预览', { exact: false }).waitFor()
+  await page.getByText('AI 测试回复：找一个键盘', { exact: true }).waitFor()
   assert.equal(await chat.inputValue(), '')
-  console.log('PASS modal focus, lazy data, drawer sections, product retry, order empty/error, chat preview and keyboard')
+  assert.equal(chatCalls, 1)
+
+  const initialComposerHeight = await chat.evaluate(element => element.getBoundingClientRect().height)
+  await chat.fill(Array.from({ length: 30 }, (_, index) => `第 ${index + 1} 行输入内容`).join('\n'))
+  const expandedComposer = await chat.evaluate(element => ({
+    height: element.getBoundingClientRect().height,
+    maximum: window.innerHeight / 2,
+    overflowY: getComputedStyle(element).overflowY,
+    resize: getComputedStyle(element).resize,
+  }))
+  assert.equal(expandedComposer.resize, 'none')
+  assert.equal(expandedComposer.height > initialComposerHeight, true)
+  assert.equal(expandedComposer.height <= expandedComposer.maximum + 1, true)
+  assert.equal(expandedComposer.overflowY, 'auto')
+  await chat.fill('')
+
+  for (let index = 1; index <= 12; index++) {
+    const text = `自动滚动检查 ${index}`
+    await chat.fill(text)
+    await chat.press('Enter')
+    await page.getByText(`AI 测试回复：${text}`, { exact: true }).waitFor()
+  }
+  await page.waitForFunction(() => {
+    const conversation = document.querySelector('.conversation')
+    return conversation && conversation.scrollHeight > conversation.clientHeight
+      && conversation.scrollHeight - conversation.clientHeight - conversation.scrollTop <= 2
+  })
+  assert.equal(await page.evaluate(() => document.documentElement.scrollHeight <= window.innerHeight + 1), true)
+  assert.equal(chatCalls, 13)
+  console.log('PASS composer auto-grows without manual resize and conversation follows the latest message')
+  console.log('PASS modal focus, lazy data, drawer sections, product retry, order empty/error, authenticated AI chat and keyboard')
   await page.setViewportSize({ width: 390, height: 844 })
   assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), true)
   await page.screenshot({ path: 'artifacts/chat-mobile.png', fullPage: true })
@@ -309,9 +345,7 @@ try {
   await mall.getByRole('button', { name: '查询', exact: true }).click()
   await mall.locator('.product-card').nth(3).waitFor()
   assert.equal(lastProductName, '键盘')
-  assert.equal(await mall.locator('.product-card').nth(1).getByRole('button', { name: '加入购物车', exact: true }).isDisabled(), true)
-  await mall.locator('.product-card').first().getByRole('button', { name: '加入购物车', exact: true }).click()
-  assert.equal(await mall.locator('.cart-item').count(), 1)
+   assert.equal(await mall.locator('.product-card').nth(1).getByRole('button', { name: '立即购买', exact: true }).isDisabled(), true)
   await page.screenshot({ path: 'artifacts/mall-desktop.png', fullPage: true })
 
   await page.getByRole('button', { name: '回到 AI', exact: true }).click()
@@ -322,33 +356,28 @@ try {
   await page.getByRole('button', { name: '逛商城', exact: true }).click()
   await mall.getByRole('heading', { name: '机械键盘' }).waitFor()
   assert.equal(await mall.getByLabel('商品名称', { exact: true }).inputValue(), '键盘')
-  assert.equal(await mall.locator('.cart-item').count(), 1)
-  assert.equal(await mall.locator('.quantity-control > span').innerText(), '1')
   await page.getByRole('button', { name: '回到 AI', exact: true }).click()
   assert.equal(await chat.inputValue(), '尚未发送的草稿')
   assert.equal(await page.getByText('切换模式后继续聊天', { exact: true }).isVisible(), true)
-  console.log('PASS AI/mall switching preserves chat, draft, search and cart without a page reload')
+   console.log('PASS AI/mall switching preserves chat, draft and search without a page reload')
 
   await page.getByRole('button', { name: '打开侧边栏' }).click()
   await page.getByRole('button', { name: '商品信息', exact: true }).click()
   const drawer = page.getByRole('dialog', { name: '你的空间' })
   assert.equal(await drawer.getByLabel('商品名称', { exact: true }).inputValue(), '键盘')
-  assert.equal(await drawer.locator('.cart-item').count(), 1)
-  await drawer.getByRole('button', { name: '+', exact: true }).click()
+  assert.equal(await drawer.getByRole('button', { name: '立即购买', exact: true }).count(), 4)
   await page.getByRole('button', { name: '订单信息', exact: true }).click()
   await page.getByText('#7', { exact: true }).waitFor()
   await page.getByRole('button', { name: '关闭侧边栏' }).click()
   await page.getByRole('button', { name: '逛商城', exact: true }).click()
   await mall.getByRole('button', { name: '全部商品', exact: true }).click()
-  assert.equal(await mall.locator('.quantity-control > span').innerText(), '2')
   await mall.getByRole('button', { name: '订单记录', exact: true }).click()
   await mall.getByText('#7', { exact: true }).waitFor()
   await mall.getByRole('heading', { name: '看看你的订单。', exact: true }).waitFor()
   await mall.getByRole('button', { name: '全部商品', exact: true }).click()
-  assert.equal(await mall.locator('.quantity-control > span').innerText(), '2')
   assert.equal(await page.locator('.commerce-panel').count(), 1)
   assert.deepEqual({ login: loginCalls, refresh: refreshCalls, me: meCalls, navigation: pageNavigations }, authBeforeModeSwitch)
-  console.log('PASS storefront and original product/order sidebar share one cart without extra authentication calls')
+   console.log('PASS storefront and original product/order sidebar share product state without extra authentication calls')
 
   productMode = 'empty'
   await mall.getByRole('button', { name: '查询', exact: true }).click()
@@ -359,8 +388,7 @@ try {
   productMode = 'dense'
   await mall.getByRole('button', { name: '重新加载', exact: true }).click()
   await mall.locator('.product-card').nth(3).waitFor()
-  assert.equal(await mall.locator('.quantity-control > span').innerText(), '2')
-  console.log('PASS storefront shows empty/error states and retries without discarding the cart')
+   console.log('PASS storefront shows empty/error states and retries without stale cart state')
 
   await page.setViewportSize({ width: 390, height: 844 })
   await page.evaluate(() => window.scrollTo(0, 0))
@@ -375,12 +403,13 @@ try {
   await page.setViewportSize({ width: 320, height: 844 })
   assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true)
   await page.setViewportSize({ width: 390, height: 844 })
-  await mall.getByRole('button', { name: '提交订单', exact: true }).scrollIntoViewIfNeeded()
-  assert.equal(await mall.getByRole('button', { name: '提交订单', exact: true }).evaluate(button => {
+  const firstPurchaseButton = mall.getByRole('button', { name: '立即购买', exact: true }).first()
+  await firstPurchaseButton.scrollIntoViewIfNeeded()
+  assert.equal(await firstPurchaseButton.evaluate(button => {
     const box = button.getBoundingClientRect()
     return button.contains(document.elementFromPoint(box.x + box.width / 2, box.y + box.height / 2))
   }), true)
-  await page.screenshot({ path: 'artifacts/mall-cart-mobile.png' })
+  await page.screenshot({ path: 'artifacts/mall-mobile-purchase.png' })
   await page.emulateMedia({ reducedMotion: 'reduce' })
   await backToAi.focus()
   await backToAi.press('Enter')
@@ -598,7 +627,6 @@ try {
   await page.getByRole('button', { name: '逛商城', exact: true }).click()
   await mall.getByRole('heading', { name: '机械键盘' }).waitFor()
   await mall.getByLabel('商品名称', { exact: true }).fill('退出前筛选')
-  await mall.getByRole('button', { name: '加入购物车', exact: true }).click()
   await page.getByRole('button', { name: '打开侧边栏' }).click()
   await page.getByRole('button', { name: '个人信息', exact: true }).click()
   await page.getByRole('button', { name: '退出登录', exact: true }).click()
@@ -615,9 +643,7 @@ try {
   await page.getByRole('button', { name: '逛商城', exact: true }).click()
   await mall.getByRole('heading', { name: '机械键盘' }).waitFor()
   assert.equal(await mall.getByLabel('商品名称', { exact: true }).inputValue(), '')
-  assert.equal(await mall.locator('.cart-item').count(), 0)
-  await mall.getByText('购物袋还是空的', { exact: true }).waitFor()
-  console.log('PASS logout from storefront resets AI view and the next login has no former cart, filters or draft')
+   console.log('PASS logout from storefront resets AI view and the next login has no former filters or draft')
   assert.deepEqual(pageErrors, [])
   console.log('PASS no browser runtime errors')
 } finally {

@@ -13,7 +13,7 @@ const users = {
   7: { id: 7, username: '订单用户甲', email: null },
   8: { id: 8, username: '订单用户乙', email: null },
 }
-const ordersFor = id => [{ id: id === 7 ? 7007 : 8008, totalAmount: 299.9, status: 'PENDING_PAYMENT' }]
+const ordersFor = id => [{ id: id === 7 ? 7007 : 8008, totalAmount: 299.9, status: 'NORMAL' }]
 const json = (route, status, data, message = '操作成功', headers = {}) => route.fulfill({
   status, contentType: 'application/json', headers, body: JSON.stringify({ code: status, message, data }),
 })

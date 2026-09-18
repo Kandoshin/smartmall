@@ -3,6 +3,7 @@ package com.smartmall.order.service;
 import com.baomidou.mybatisplus.core.conditions.update.UpdateWrapper;
 import com.smartmall.order.client.ProductClient;
 import com.smartmall.order.dto.OrderDTO;
+import com.smartmall.order.dto.OrderDetailDTO;
 import com.smartmall.order.entity.Order;
 import com.smartmall.order.exception.OrderNotFoundException;
 import com.smartmall.order.mapper.OrderItemMapper;
@@ -11,6 +12,7 @@ import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
 
 import java.math.BigDecimal;
+import java.util.List;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -22,6 +24,59 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 class OrderServiceTest {
+
+    @Test
+    void shouldReturnDetailWhenOrderBelongsToUser() {
+        OrderMapper orderMapper = mock(OrderMapper.class);
+        OrderItemMapper orderItemMapper = mock(OrderItemMapper.class);
+        OrderService orderService = new OrderService(
+                mock(ProductClient.class), orderMapper, orderItemMapper);
+
+        Order order = new Order();
+        order.setId(1L);
+        order.setUserId(7L);
+        order.setTotalAmount(new BigDecimal("599.80"));
+        order.setStatus("NORMAL");
+        when(orderMapper.selectById(1L)).thenReturn(order);
+        when(orderItemMapper.selectList(any())).thenReturn(List.of());
+
+        OrderDetailDTO result = orderService.getOrderDetailById(7L, 1L);
+
+        assertEquals(1L, result.getId());
+        assertEquals(7L, result.getUserId());
+        assertEquals(new BigDecimal("599.80"), result.getTotalAmount());
+        assertTrue(result.getItems().isEmpty());
+        verify(orderItemMapper).selectList(any());
+    }
+
+    @Test
+    void shouldHideDetailWhenOrderBelongsToAnotherUser() {
+        OrderMapper orderMapper = mock(OrderMapper.class);
+        OrderItemMapper orderItemMapper = mock(OrderItemMapper.class);
+        OrderService orderService = new OrderService(
+                mock(ProductClient.class), orderMapper, orderItemMapper);
+        Order order = new Order();
+        order.setId(1L);
+        order.setUserId(8L);
+        when(orderMapper.selectById(1L)).thenReturn(order);
+
+        assertThrows(OrderNotFoundException.class,
+                () -> orderService.getOrderDetailById(7L, 1L));
+        verify(orderItemMapper, never()).selectList(any());
+    }
+
+    @Test
+    void shouldRejectDetailWhenOrderDoesNotExist() {
+        OrderMapper orderMapper = mock(OrderMapper.class);
+        OrderItemMapper orderItemMapper = mock(OrderItemMapper.class);
+        OrderService orderService = new OrderService(
+                mock(ProductClient.class), orderMapper, orderItemMapper);
+        when(orderMapper.selectById(1L)).thenReturn(null);
+
+        assertThrows(OrderNotFoundException.class,
+                () -> orderService.getOrderDetailById(7L, 1L));
+        verify(orderItemMapper, never()).selectList(any());
+    }
 
     @Test
     void shouldCancelPendingPaymentOrder() {
@@ -38,7 +93,7 @@ class OrderServiceTest {
         order.setId(1L);
         order.setUserId(7L);
         order.setTotalAmount(new BigDecimal("599.80"));
-        order.setStatus("PENDING_PAYMENT");
+        order.setStatus("NORMAL");
 
         when(orderMapper.selectById(1L)).thenReturn(order);
         when(orderMapper.update(isNull(), any(UpdateWrapper.class))).thenReturn(1);
@@ -96,7 +151,7 @@ class OrderServiceTest {
         Order order = new Order();
         order.setId(1L);
         order.setUserId(8L);
-        order.setStatus("PENDING_PAYMENT");
+        order.setStatus("NORMAL");
         when(orderMapper.selectById(1L)).thenReturn(order);
 
         assertThrows(OrderNotFoundException.class, () -> orderService.cancelOrder(7L, 1L));
@@ -122,11 +177,11 @@ class OrderServiceTest {
         Order order = new Order();
         order.setId(1L);
         order.setUserId(7L);
-        order.setStatus("PENDING_PAYMENT");
+        order.setStatus("NORMAL");
         when(orderMapper.selectById(1L)).thenReturn(order);
         when(orderMapper.update(isNull(), any(UpdateWrapper.class))).thenReturn(0);
 
         assertThrows(IllegalArgumentException.class, () -> orderService.cancelOrder(7L, 1L));
-        assertEquals("PENDING_PAYMENT", order.getStatus());
+        assertEquals("NORMAL", order.getStatus());
     }
 }

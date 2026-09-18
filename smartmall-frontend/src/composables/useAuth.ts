@@ -1,6 +1,6 @@
 import { onMounted, onUnmounted, ref } from 'vue'
-import { ApiError, cancelOrder, createOrder, getCurrentUser, getMyOrders, login, logoutSession, refreshSession } from '../api'
-import type { LoginResponse, OrderCreateItem, User } from '../types'
+import { ApiError, cancelOrder, createOrder, getCurrentUser, getMyOrders, getOrderDetail, login, logoutSession, refreshSession, sendChatMessage } from '../api'
+import type { LoginResponse, OrderCreateItem, OrderDetail, User } from '../types'
 
 export function useAuth() {
   const username = ref('')
@@ -127,6 +127,62 @@ export function useAuth() {
         if (error.status === 0 || error.status >= 500 || (error.status >= 200 && error.status < 300)) {
           throw new ApiError(error.status, '未能确认是否取消成功，请刷新“我的订单”核对状态')
         }
+      }
+      throw error
+    }
+  }
+
+  async function fetchOrderDetail(orderId: number, signal?: AbortSignal): Promise<OrderDetail> {
+    if (!accessToken || !currentUser.value || Date.now() >= expiresAt) {
+      if (currentUser.value) expireSession()
+      throw new ApiError(401, '登录已失效，请重新登录')
+    }
+
+    const version = requestVersion
+    const requestSignal = signal
+      ? AbortSignal.any([signal, sessionRequests.signal])
+      : sessionRequests.signal
+    try {
+      const detail = await getOrderDetail(accessToken, orderId, requestSignal)
+      requestSignal.throwIfAborted()
+      if (!detail || detail.id !== orderId || !Number.isSafeInteger(detail.userId)
+        || detail.userId <= 0 || !Number.isFinite(detail.totalAmount)
+        || typeof detail.status !== 'string' || !detail.status
+        || !Array.isArray(detail.items)) {
+        throw new ApiError(0, '订单详情响应格式异常')
+      }
+      return detail
+    } catch (error) {
+      if (!requestSignal.aborted && version === requestVersion
+        && error instanceof ApiError && error.status === 401) {
+        expireSession()
+      }
+      throw error
+    }
+  }
+
+  async function chatWithAi(message: string, signal?: AbortSignal) {
+    if (!accessToken || !currentUser.value || Date.now() >= expiresAt) {
+      if (currentUser.value) expireSession()
+      throw new ApiError(401, '登录已失效，请重新登录')
+    }
+
+    const token = accessToken
+    const version = requestVersion
+    const requestSignal = signal
+      ? AbortSignal.any([signal, sessionRequests.signal])
+      : sessionRequests.signal
+    try {
+      const response = await sendChatMessage(token, message, requestSignal)
+      requestSignal.throwIfAborted()
+      if (!response || typeof response.answer !== 'string' || !response.answer.trim()) {
+        throw new ApiError(0, 'AI 响应格式异常，请稍后重试')
+      }
+      return response.answer.trim()
+    } catch (error) {
+      if (!requestSignal.aborted && version === requestVersion
+        && error instanceof ApiError && error.status === 401) {
+        expireSession()
       }
       throw error
     }
@@ -271,5 +327,6 @@ export function useAuth() {
   })
 
   return { username, password, currentUser, busy, errorMessage, statusMessage, logoutNeedsRetry,
-    restoring, restoreNeedsRetry, restoreSession, handleLogin, logout, fetchMyOrders, createMyOrder, cancelMyOrder }
+    restoring, restoreNeedsRetry, restoreSession, handleLogin, logout, fetchMyOrders, fetchOrderDetail,
+    createMyOrder, cancelMyOrder, chatWithAi }
 }

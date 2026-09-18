@@ -11,7 +11,7 @@ const users = {
   7: { id: 7, username: '下单用户甲', email: null },
   8: { id: 8, username: '下单用户乙', email: null },
 }
-const orderFor = id => ({ id: id * 1000 + id, totalAmount: 299.9, status: 'PENDING_PAYMENT' })
+const orderFor = id => ({ id: id * 1000 + id, totalAmount: 299.9, status: 'NORMAL' })
 const json = (route, status, data, message = '操作成功', headers = {}) => route.fulfill({
   status, contentType: 'application/json', headers, body: JSON.stringify({ code: status, message, data }),
 })
@@ -154,13 +154,13 @@ async function fixture({ expiresIn = 900 } = {}) {
     await page.getByRole('button', { name: '登录', exact: true }).click()
     await loggedIn()
   }
-  async function addCart() {
+async function selectProduct() {
     await page.getByRole('button', { name: '逛商城', exact: true }).click()
     await mall.getByRole('heading', { name: '机械键盘' }).waitFor()
     assert.equal(await mall.getByLabel('下单用户 ID', { exact: true }).count(), 0)
-    await mall.getByRole('button', { name: '加入购物车', exact: true }).click()
+    // The purchase button is invoked by submit(); this helper only opens the product view.
   }
-  async function submit() { await mall.getByRole('button', { name: '提交订单', exact: true }).click() }
+  async function submit() { await mall.getByRole('button', { name: '立即购买', exact: true }).click() }
   async function logout() {
     await page.getByRole('button', { name: '打开侧边栏' }).click()
     await page.getByRole('button', { name: '个人信息', exact: true }).click()
@@ -183,7 +183,7 @@ async function fixture({ expiresIn = 900 } = {}) {
     assert.deepEqual(await page.evaluate(() => [Object.keys(localStorage), Object.keys(sessionStorage)]), [[], []])
     for (const cookie of await context.cookies()) assert.ok(!state.tokens.has(cookie.value))
   }
-  return { context, page, state, mall, login, loggedIn, addCart, submit, logout, settle, checkClean }
+  return { context, page, state, mall, login, loggedIn, selectProduct, submit, logout, settle, checkClean }
 }
 
 async function run(name, options, body) {
@@ -205,15 +205,15 @@ async function run(name, options, body) {
 }
 
 try {
-  await run('successful checkout sends items only and identifies the buyer through memory Bearer, then clears cart and opens My Orders', {}, async f => {
+  await run('immediate purchase sends one item and identifies the buyer through memory Bearer, then opens My Orders', {}, async f => {
     await f.login()
-    await f.addCart()
+    await f.selectProduct()
     await mkdir('artifacts', { recursive: true })
     await f.page.screenshot({ path: 'artifacts/checkout-auth-desktop.png', fullPage: true })
     await f.page.setViewportSize({ width: 320, height: 844 })
     assert.equal(await f.page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true)
-    await f.mall.getByRole('button', { name: '提交订单', exact: true }).scrollIntoViewIfNeeded()
-    assert.equal(await f.mall.getByRole('button', { name: '提交订单', exact: true }).evaluate(button => {
+    await f.mall.getByRole('button', { name: '立即购买', exact: true }).scrollIntoViewIfNeeded()
+    assert.equal(await f.mall.getByRole('button', { name: '立即购买', exact: true }).evaluate(button => {
       const box = button.getBoundingClientRect()
       return button.contains(document.elementFromPoint(box.x + box.width / 2, box.y + box.height / 2))
     }), true)
@@ -223,8 +223,7 @@ try {
     assert.equal(f.state.posts[0].id, 7)
     assert.equal(f.state.posts[0].token, f.state.lastToken)
     assert.equal(f.state.posts.length, 1)
-    await f.mall.getByRole('button', { name: '全部商品', exact: true }).click()
-    assert.equal(await f.mall.locator('.cart-item').count(), 0)
+    assert.equal(await f.mall.locator('.order-card').count(), 1)
   })
 
   await run('reload restores a new memory token which checkout uses without repeating password login', {}, async f => {
@@ -232,7 +231,7 @@ try {
     const oldToken = f.state.lastToken
     await f.page.reload()
     await f.loggedIn()
-    await f.addCart()
+    await f.selectProduct()
     await f.submit()
     await f.mall.getByText('#8008', { exact: true }).waitFor()
     assert.notEqual(f.state.posts[0].token, oldToken)
@@ -243,7 +242,7 @@ try {
   for (const mode of ['401', 'empty401']) {
     await run(`${mode} clears local identity without refresh/logout/replaying POST`, {}, async f => {
       await f.login()
-      await f.addCart()
+       await f.selectProduct()
       f.state.mode = mode
       const refreshBefore = f.state.refreshCalls
       await f.submit()
@@ -260,7 +259,7 @@ try {
   for (const mode of ['400', '403', '503', 'network', 'malformed']) {
     await run(`${mode} keeps identity/cart and never automatically repeats checkout`, {}, async f => {
       await f.login()
-      await f.addCart()
+     await f.selectProduct()
       f.state.mode = mode
       const refreshBefore = f.state.refreshCalls
       await f.submit()
@@ -268,8 +267,7 @@ try {
       await f.page.getByRole('status').filter({ hasText: message }).waitFor()
       await f.settle()
       assert.equal(await f.page.getByRole('dialog', { name: '登录 SmartMall' }).isVisible(), false)
-      assert.equal(await f.mall.locator('.cart-item').count(), 1)
-      assert.equal(await f.mall.locator('.quantity-control > span').innerText(), '1')
+       assert.equal(await f.mall.getByRole('heading', { name: '机械键盘' }).isVisible(), true)
       assert.equal(f.state.posts.length, 1)
       assert.equal(f.state.refreshCalls, refreshBefore)
       assert.equal(f.state.logoutCalls, 0)
@@ -277,18 +275,16 @@ try {
     })
   }
 
-  await run('pending checkout guards synchronous duplicate clicks and cart mutation', {}, async f => {
+   await run('pending immediate purchase guards synchronous duplicate clicks', {}, async f => {
     await f.login()
-    await f.addCart()
+     await f.selectProduct()
     f.state.mode = 'delayed'
-    await f.mall.getByRole('button', { name: '提交订单', exact: true }).evaluate(button => {
+     await f.mall.getByRole('button', { name: '立即购买', exact: true }).evaluate(button => {
       button.click(); button.click()
     })
     await waitForFixture(() => f.state.pending.length === 1)
     assert.equal(await f.mall.getByRole('button', { name: '正在创建订单...', exact: true }).isDisabled(), true)
-    for (const name of ['加入购物车', '+', '−', '移除']) {
-      assert.equal(await f.mall.getByRole('button', { name, exact: true }).isDisabled(), true)
-    }
+     assert.equal(await f.mall.getByRole('button', { name: '正在创建订单...', exact: true }).isDisabled(), true)
     assert.equal(f.state.posts.length, 1)
     await f.state.pending[0].complete()
     await f.mall.getByText('#7007', { exact: true }).waitFor()
@@ -298,7 +294,7 @@ try {
   for (const lateStatus of [200, 401]) {
     await run(`logout cancels checkout; late old-account ${lateStatus} cannot alter new identity/cart/navigation`, {}, async f => {
       await f.login()
-      await f.addCart()
+       await f.selectProduct()
       await f.page.evaluate(() => { window.__ignoreCheckoutAbort = true })
       f.state.mode = 'delayed'
       await f.submit()
@@ -306,12 +302,12 @@ try {
       await f.logout()
       await f.page.waitForFunction(() => window.__checkoutFetches[0].aborted)
       await f.login('bob')
-      await f.addCart()
+       await f.selectProduct()
       await f.state.pending[0].complete(lateStatus)
       await f.page.waitForFunction(() => window.__checkoutFetches[0].settled)
       await f.settle()
       assert.equal(await f.page.getByRole('dialog', { name: '登录 SmartMall' }).isVisible(), false)
-      assert.equal(await f.mall.locator('.cart-item').count(), 1)
+       assert.equal(await f.mall.getByRole('heading', { name: '机械键盘' }).isVisible(), true)
       assert.equal(await f.mall.getByRole('heading', { name: '机械键盘' }).isVisible(), true)
       assert.equal(await f.mall.getByText('#7007', { exact: true }).count(), 0)
       assert.equal(f.state.posts.length, 1)
@@ -322,7 +318,7 @@ try {
 
   await run('Access expiry aborts in-flight checkout and a late success cannot restore the old business UI', { expiresIn: 3 }, async f => {
     await f.login()
-    await f.addCart()
+     await f.selectProduct()
     await f.page.evaluate(() => { window.__ignoreCheckoutAbort = true })
     f.state.mode = 'delayed'
     await f.submit()

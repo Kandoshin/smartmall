@@ -1,6 +1,6 @@
 import { afterEach, mock, test } from 'node:test'
 import assert from 'node:assert/strict'
-import { ApiError, getCurrentUser, getMyOrders, getProducts, login, refreshSession, logoutSession } from '../src/api.ts'
+import { ApiError, getCurrentUser, getMyOrders, getOrderDetail, getProducts, login, refreshSession, logoutSession, sendChatMessage } from '../src/api.ts'
 
 afterEach(() => mock.restoreAll())
 
@@ -153,7 +153,7 @@ test('current-user Bearer credentials do not spill into product requests', async
 })
 
 test('my orders uses only the supplied Bearer on GET /api/orders/me and unwraps nonempty data', async () => {
-  const orders = [{ id: 101, totalAmount: 199, status: 'PENDING_PAYMENT', createdAt: '2026-09-11T12:00:00' }]
+  const orders = [{ id: 101, totalAmount: 199, status: 'NORMAL', createdAt: '2026-09-11T12:00:00' }]
   const calls = []
   mock.method(globalThis, 'fetch', async (url, options) => {
     calls.push(url)
@@ -179,6 +179,24 @@ test('my orders returns an empty array without treating it as an error', async (
 
   assert.deepEqual(await getMyOrders('orders-access'), [])
   assert.deepEqual(calls, ['/api/orders/me'])
+})
+
+test('order detail uses the path id and supplied Bearer without cookies', async () => {
+  const detail = {
+    id: 101, userId: 7, totalAmount: 199, status: 'NORMAL',
+    createdAt: '2026-09-15T10:00:00',
+    items: [{ productId: 2, productName: '机械键盘', unitPrice: 199, quantity: 1, subtotal: 199 }],
+  }
+  mock.method(globalThis, 'fetch', async (url, options) => {
+    assert.equal(url, '/api/orders/101')
+    assert.equal(options.method ?? 'GET', 'GET')
+    assert.equal(options.credentials, 'omit')
+    assert.equal(options.cache, 'no-store')
+    assert.deepEqual([...new Headers(options.headers)], [['authorization', 'Bearer detail-access']])
+    return Response.json({ code: 200, message: '操作成功', data: detail })
+  })
+
+  assert.deepEqual(await getOrderDetail('detail-access', 101), detail)
 })
 
 test('my orders reads the token argument on each call rather than retaining an earlier identity', async () => {
@@ -413,4 +431,31 @@ test('cancellation is not converted into a server failure', async () => {
   controller.abort()
   mock.method(globalThis, 'fetch', async (_url, options) => { throw options.signal.reason })
   await assert.rejects(getCurrentUser('token', controller.signal), { name: 'AbortError' })
+})
+
+test('chat sends only the supplied Access Bearer and unwraps the AI answer', async () => {
+  mock.method(globalThis, 'fetch', async (url, options) => {
+    assert.equal(url, '/api/chat')
+    assert.equal(options.method, 'POST')
+    assert.equal(options.credentials, 'omit')
+    assert.equal(options.headers.Authorization, 'Bearer chat-access')
+    assert.deepEqual(JSON.parse(options.body), { message: '推荐一把键盘' })
+    return Response.json({ code: 200, message: '操作成功', data: { answer: '推荐结果' } })
+  })
+
+  assert.deepEqual(await sendChatMessage('chat-access', '推荐一把键盘'), { answer: '推荐结果' })
+})
+
+test('chat preserves authentication and upstream failures without retrying', async () => {
+  for (const status of [401, 503]) {
+    let calls = 0
+    mock.method(globalThis, 'fetch', async () => {
+      calls += 1
+      return Response.json({ code: status, message: `错误${status}`, data: null }, { status })
+    })
+    await assert.rejects(sendChatMessage('chat-access', '你好'),
+      (error) => error instanceof ApiError && error.status === status)
+    assert.equal(calls, 1)
+    mock.restoreAll()
+  }
 })

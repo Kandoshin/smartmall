@@ -8,6 +8,7 @@ import com.nimbusds.jwt.SignedJWT;
 import com.smartmall.order.controller.OrderController;
 import com.smartmall.order.dto.OrderCreateRequest;
 import com.smartmall.order.dto.OrderDTO;
+import com.smartmall.order.dto.OrderDetailDTO;
 import com.smartmall.order.exception.GlobalExceptionHandler;
 import com.smartmall.order.exception.OrderNotFoundException;
 import com.smartmall.order.service.OrderService;
@@ -124,7 +125,7 @@ class OrderJwtHttpTest {
 
         withHttp((mvc, service) -> {
             when(service.getOrdersByUserId(userId)).thenReturn(List.of(
-                    new OrderDTO(orderId, new BigDecimal("12.50"), "PENDING_PAYMENT")));
+                    new OrderDTO(orderId, new BigDecimal("12.50"), "NORMAL")));
             mvc.perform(get("/orders/me")
                             .header(HttpHeaders.AUTHORIZATION, "Bearer " + token))
                     .andExpect(status().isOk())
@@ -135,7 +136,7 @@ class OrderJwtHttpTest {
                     .andExpect(jsonPath("$.data.length()").value(1))
                     .andExpect(jsonPath("$.data[0].id").value(orderId))
                     .andExpect(jsonPath("$.data[0].totalAmount").value(12.5))
-                    .andExpect(jsonPath("$.data[0].status").value("PENDING_PAYMENT"))
+                    .andExpect(jsonPath("$.data[0].status").value("NORMAL"))
                     .andExpect(jsonPath("$.data[0].userId").doesNotExist());
             verify(service).getOrdersByUserId(userId);
             verifyNoMoreInteractions(service);
@@ -156,6 +157,57 @@ class OrderJwtHttpTest {
                     .andExpect(jsonPath("$.data").isEmpty());
             verify(service).getOrdersByUserId(7L);
             verifyNoMoreInteractions(service);
+        });
+    }
+
+    @Test
+    void detailUsesVerifiedSubjectAndPathOrderId() throws Exception {
+        String token = sign("smartmall-api", Instant.now().plusSeconds(300), signingKey);
+
+        withHttp((mvc, service) -> {
+            when(service.getOrderDetailById(7L, 91L)).thenReturn(
+                    new OrderDetailDTO(91L, 7L, new BigDecimal("12.50"),
+                            "NORMAL", null, List.of()));
+            mvc.perform(get("/orders/91")
+                            .param("userId", "8")
+                            .header(HttpHeaders.AUTHORIZATION, "Bearer " + token))
+                    .andExpect(status().isOk())
+                    .andExpect(jsonPath("$.code").value(200))
+                    .andExpect(jsonPath("$.data.id").value(91))
+                    .andExpect(jsonPath("$.data.userId").value(7))
+                    .andExpect(jsonPath("$.data.items").isArray());
+            verify(service).getOrderDetailById(7L, 91L);
+            verify(service, never()).getOrderDetailById(8L, 91L);
+            verifyNoMoreInteractions(service);
+        });
+    }
+
+    @Test
+    void foreignOrMissingDetailIsHiddenBehindNotFound() throws Exception {
+        String token = sign("smartmall-api", Instant.now().plusSeconds(300), signingKey);
+
+        withHttp((mvc, service) -> {
+            when(service.getOrderDetailById(7L, 91L)).thenThrow(new OrderNotFoundException(91L));
+            mvc.perform(get("/orders/91")
+                            .header(HttpHeaders.AUTHORIZATION, "Bearer " + token))
+                    .andExpect(status().isNotFound())
+                    .andExpect(jsonPath("$.code").value(404))
+                    .andExpect(jsonPath("$.message").value("订单不存在：91"))
+                    .andExpect(jsonPath("$.data").doesNotExist());
+            verify(service).getOrderDetailById(7L, 91L);
+            verifyNoMoreInteractions(service);
+        });
+    }
+
+    @Test
+    void expiredAccessTokenCannotReadOrderDetail() throws Exception {
+        String token = sign("smartmall-api", Instant.now().minusSeconds(300), signingKey);
+
+        withHttp((mvc, service) -> {
+            mvc.perform(get("/orders/91")
+                            .header(HttpHeaders.AUTHORIZATION, "Bearer " + token))
+                    .andExpect(status().isUnauthorized());
+            verifyNoInteractions(service);
         });
     }
 
@@ -187,7 +239,7 @@ class OrderJwtHttpTest {
 
         withHttp((mvc, service) -> {
             when(service.getOrdersByUserId(7L)).thenReturn(List.of(
-                    new OrderDTO(7007L, new BigDecimal("12.50"), "PENDING_PAYMENT")));
+                    new OrderDTO(7007L, new BigDecimal("12.50"), "NORMAL")));
             mvc.perform(get("/orders/me").param("userId", "8")
                             .header(HttpHeaders.AUTHORIZATION, "Bearer " + token))
                     .andExpect(status().isOk())
@@ -302,7 +354,7 @@ class OrderJwtHttpTest {
 
         withHttp((mvc, service) -> {
             when(service.createOrder(eq(userId), any(OrderCreateRequest.class))).thenReturn(
-                    new OrderDTO(orderId, new BigDecimal("12.50"), "PENDING_PAYMENT"));
+                    new OrderDTO(orderId, new BigDecimal("12.50"), "NORMAL"));
             mvc.perform(post("/orders")
                             .param("userId", Long.toString(suppliedUserId))
                             .contentType(MediaType.APPLICATION_JSON)
@@ -314,7 +366,7 @@ class OrderJwtHttpTest {
                     .andExpect(jsonPath("$.message").value("操作成功"))
                     .andExpect(jsonPath("$.data.id").value(orderId))
                     .andExpect(jsonPath("$.data.totalAmount").value(12.5))
-                    .andExpect(jsonPath("$.data.status").value("PENDING_PAYMENT"));
+                    .andExpect(jsonPath("$.data.status").value("NORMAL"));
             verify(service).createOrder(eq(userId), argThat(request -> request.getItems().size() == 1
                     && request.getItems().get(0).getProductId() == 1L
                     && request.getItems().get(0).getQuantity() == 1));
@@ -367,7 +419,7 @@ class OrderJwtHttpTest {
             assertThat(context.getBeansOfType(javax.sql.DataSource.class)).isEmpty();
             OrderService service = context.getBean(OrderService.class);
             when(service.createOrder(eq(7L), any(OrderCreateRequest.class))).thenReturn(
-                    new OrderDTO(7007L, new BigDecimal("12.50"), "PENDING_PAYMENT"));
+                    new OrderDTO(7007L, new BigDecimal("12.50"), "NORMAL"));
             String token = sign("smartmall-api", Instant.now().plusSeconds(300), signingKey);
             int port = context.getWebServer().getPort();
             HttpResponse<String> response = HttpClient.newHttpClient().send(
@@ -379,7 +431,7 @@ class OrderJwtHttpTest {
                     HttpResponse.BodyHandlers.ofString());
 
             assertThat(response.statusCode()).isEqualTo(200);
-            assertThat(response.body()).contains("\"code\":200", "\"id\":7007", "\"status\":\"PENDING_PAYMENT\"");
+            assertThat(response.body()).contains("\"code\":200", "\"id\":7007", "\"status\":\"NORMAL\"");
             verify(service).createOrder(eq(7L), argThat(request -> request.getItems().size() == 1
                     && request.getItems().get(0).getProductId() == 1L
                     && request.getItems().get(0).getQuantity() == 1));
