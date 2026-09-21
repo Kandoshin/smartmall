@@ -78,12 +78,14 @@ Vue 前端
   ├─ /api/auth     -> 用户服务 -> JWT 校验 / MyBatis-Plus -> MySQL
   ├─ /api/products -> 商品服务 -> MyBatis-Plus -> MySQL
   ├─ /api/orders   -> 订单服务 -> 商品服务 -> MyBatis-Plus -> MySQL
-  └─ /api/chat     -> AI 服务 -> Responses API
+  └─ /api/chat     -> AI 服务 -> Responses API（SSE 流式输出）
                            ├─ 商品查询工具 -> 商品服务
                            └─ 本人订单工具 -> 订单服务（转发当前 Access Token）
 ```
 
 创建订单时，订单服务先调用商品服务校验商品并获取价格；所有商品验证成功后，才在一个事务中写入订单主表和订单明细表。
+
+AI 对话使用 `POST /chat` 保留 JSON 请求体和 Bearer Token，并通过 SSE 逐段返回模型文本。前端使用 `fetch` 读取响应流，因此不需要把请求降级为无法方便携带 POST body 的原生 `EventSource`。
 
 ## 构建验证
 

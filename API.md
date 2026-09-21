@@ -284,21 +284,27 @@ All successful endpoints use `Result<T>`:
 }
 ```
 
-成功返回统一 `Result<T>`：
+成功响应的 Content-Type 为 `text/event-stream`。每个 SSE 事件的 `data` 仍使用统一的 `Result<T>`：
 
-```json
-{
-  "code": 200,
-  "message": "操作成功",
-  "data": {
-    "answer": "这里有几款当前在售的键盘……"
-  }
-}
+```text
+event: delta
+data: {"code":200,"message":"操作成功","data":{"text":"这里有"}}
+
+event: delta
+data: {"code":200,"message":"操作成功","data":{"text":"几款键盘……"}}
+
+event: done
+data: {"code":200,"message":"操作成功","data":{"text":""}}
 ```
+
+- `delta`：本轮新生成的一小段文字，前端应按收到顺序追加，而不是覆盖已有内容。
+- `status`：AI 调用工具时的过程提示，例如“正在查询商品…”。
+- `done`：本次响应正常结束。
+- `error`：流已经开始后的失败，`data` 为失败的 `Result`。此时 HTTP 状态通常已经是 `200`，前端应读取事件里的 `code` 和 `message`。
 
 - `message` 为 null、空字符串或全空格时返回 HTTP `400`，不会请求模型。
 - 缺少、无效或过期的 Access Token 时返回统一 JSON HTTP `401`。
-- 模型、中转站、商品服务或订单服务不可用时返回 HTTP `503`，前端不会自动重试。
+- 请求通过校验并进入异步生成后，模型、中转站、商品服务或订单服务故障通过 `error` 事件返回，其中 `Result.code` 为 `503`；前端不会自动重试。
 - AI 使用 Responses API，并保持 `store=false`。当前开放 `search_products` 和 `list_my_orders` 两个只读工具。
 - 商品工具只查询状态为在售的前 10 条商品；订单工具不接受模型提供的用户 ID，而是把当前已验证的 Access Token 转发给订单服务的 `/orders/me`。
 - 当前不允许 AI 直接下单、取消订单或退款；写操作仍通过现有显式页面流程执行。

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
+import { computed, nextTick, onMounted, onUnmounted, reactive, ref, watch } from 'vue'
 import AuthPanel from './components/AuthPanel.vue'
 import CommercePanel from './components/CommercePanel.vue'
 import ModalSurface from './components/ModalSurface.vue'
@@ -27,11 +27,13 @@ const messages = ref<{
   userText: string
   assistantText: string
   pending: boolean
-  error: boolean
+  statusText: string
+  errorText: string
 }[]>([])
 const chatBusy = ref(false)
 let activeChat: AbortController | null = null
 let messageId = 0
+let scrollFrame: number | null = null
 
 function resizeComposer() {
   const textarea = composer.value
@@ -48,6 +50,14 @@ function scrollToLatest(behavior: ScrollBehavior = 'smooth') {
   const chat = conversation.value
   if (!chat) return
   chat.scrollTo({ top: chat.scrollHeight, behavior })
+}
+
+function scheduleScrollToLatest() {
+  if (scrollFrame !== null) return
+  scrollFrame = requestAnimationFrame(() => {
+    scrollFrame = null
+    scrollToLatest('auto')
+  })
 }
 
 function selectSection(value: Section) {
@@ -80,13 +90,14 @@ async function togglePageMode() {
 async function sendMessage() {
   const text = draft.value.trim()
   if (!currentUser.value || !text || chatBusy.value) return
-  const message = {
+  const message = reactive({
     id: ++messageId,
     userText: text,
     assistantText: '',
     pending: true,
-    error: false,
-  }
+    statusText: '正在思考…',
+    errorText: '',
+  })
   messages.value.push(message)
   draft.value = ''
   chatBusy.value = true
@@ -97,11 +108,22 @@ async function sendMessage() {
   scrollToLatest()
 
   try {
-    message.assistantText = await chatWithAi(text, chatController.signal)
+    await chatWithAi(
+      text,
+      (delta) => {
+        message.pending = false
+        message.assistantText += delta
+        scheduleScrollToLatest()
+      },
+      (status) => {
+        message.statusText = status
+        scheduleScrollToLatest()
+      },
+      chatController.signal,
+    )
   } catch (error) {
     if (chatController.signal.aborted) return
-    message.error = true
-    message.assistantText = error instanceof Error ? error.message : 'AI 暂时无法回复，请稍后重试'
+    message.errorText = error instanceof Error ? error.message : 'AI 暂时无法回复，请稍后重试'
   } finally {
     message.pending = false
     if (activeChat === chatController) {
@@ -132,6 +154,7 @@ onMounted(() => {
 })
 
 onUnmounted(() => {
+  if (scrollFrame !== null) cancelAnimationFrame(scrollFrame)
   window.removeEventListener('resize', resizeComposer)
 })
 
@@ -179,8 +202,9 @@ watch(currentUser, async (user) => {
           <p class="user-message">{{ message.userText }}</p>
           <div class="assistant-message">
             <span class="assistant-mark" aria-hidden="true">S</span>
-            <p :class="{ 'chat-error': message.error }">
-              {{ message.pending ? '正在思考…' : message.assistantText }}
+            <p>
+              <span v-if="message.pending && !message.assistantText">{{ message.statusText }}</span>
+              <span v-if="message.assistantText">{{ message.assistantText }}</span><span v-if="message.errorText" class="chat-error">{{ message.assistantText ? '\n\n' : '' }}{{ message.errorText }}</span>
             </p>
           </div>
         </article>

@@ -1,10 +1,20 @@
 import { afterEach, mock, test } from 'node:test'
 import assert from 'node:assert/strict'
-import { ApiError, getCurrentUser, getMyOrders, getOrderDetail, getProducts, login, refreshSession, logoutSession, sendChatMessage } from '../src/api.ts'
+import { ApiError, getCurrentUser, getMyOrders, getOrderDetail, getProducts, login, refreshSession, logoutSession, streamChatMessage } from '../src/api.ts'
 
 afterEach(() => mock.restoreAll())
 
 const csrfResponse = () => Response.json({ code: 200, data: { headerName: 'X-XSRF-TOKEN', token: 'test-csrf' } })
+const sseEvent = (name, payload) => `event:${name}\ndata:${JSON.stringify(payload)}\n\n`
+const sseResponse = (...chunks) => {
+  const encoder = new TextEncoder()
+  return new Response(new ReadableStream({
+    start(controller) {
+      for (const chunk of chunks) controller.enqueue(encoder.encode(chunk))
+      controller.close()
+    },
+  }), { headers: { 'Content-Type': 'text/event-stream' } })
+}
 
 test('logout POST uses browser cookies and CSRF without body or Bearer, returning null', async () => {
   const calls = []
@@ -433,29 +443,57 @@ test('cancellation is not converted into a server failure', async () => {
   await assert.rejects(getCurrentUser('token', controller.signal), { name: 'AbortError' })
 })
 
-test('chat sends only the supplied Access Bearer and unwraps the AI answer', async () => {
+test('chat streams status and split text deltas with only the supplied Access Bearer', async () => {
   mock.method(globalThis, 'fetch', async (url, options) => {
     assert.equal(url, '/api/chat')
     assert.equal(options.method, 'POST')
     assert.equal(options.credentials, 'omit')
+    assert.equal(options.headers.Accept, 'text/event-stream')
     assert.equal(options.headers.Authorization, 'Bearer chat-access')
     assert.deepEqual(JSON.parse(options.body), { message: '推荐一把键盘' })
-    return Response.json({ code: 200, message: '操作成功', data: { answer: '推荐结果' } })
+    const status = sseEvent('status', { code: 200, message: '操作成功', data: { text: '正在查询商品…' } })
+    const delta1 = sseEvent('delta', { code: 200, message: '操作成功', data: { text: '推荐' } })
+    const delta2 = sseEvent('delta', { code: 200, message: '操作成功', data: { text: '结果' } })
+    const done = sseEvent('done', { code: 200, message: '操作成功', data: { text: '' } })
+    return sseResponse(status.slice(0, 17), status.slice(17) + delta1 + delta2.slice(0, 9), delta2.slice(9) + done)
   })
 
-  assert.deepEqual(await sendChatMessage('chat-access', '推荐一把键盘'), { answer: '推荐结果' })
+  const statuses = []
+  const deltas = []
+  await streamChatMessage('chat-access', '推荐一把键盘', {
+    onStatus: text => statuses.push(text),
+    onDelta: text => deltas.push(text),
+  })
+  assert.deepEqual(statuses, ['正在查询商品…'])
+  assert.deepEqual(deltas, ['推荐', '结果'])
 })
 
-test('chat preserves authentication and upstream failures without retrying', async () => {
-  for (const status of [401, 503]) {
-    let calls = 0
-    mock.method(globalThis, 'fetch', async () => {
-      calls += 1
-      return Response.json({ code: status, message: `错误${status}`, data: null }, { status })
-    })
-    await assert.rejects(sendChatMessage('chat-access', '你好'),
-      (error) => error instanceof ApiError && error.status === status)
-    assert.equal(calls, 1)
-    mock.restoreAll()
-  }
+test('chat preserves an HTTP authentication failure without retrying', async () => {
+  let calls = 0
+  mock.method(globalThis, 'fetch', async () => {
+    calls += 1
+    return Response.json({ code: 401, message: '请先登录或重新登录', data: null }, { status: 401 })
+  })
+  await assert.rejects(streamChatMessage('chat-access', '你好', { onDelta() {} }),
+    (error) => error instanceof ApiError && error.status === 401)
+  assert.equal(calls, 1)
+})
+
+test('chat turns an SSE error event into ApiError while preserving earlier text', async () => {
+  mock.method(globalThis, 'fetch', async () => sseResponse(
+    sseEvent('delta', { code: 200, message: '操作成功', data: { text: '部分回答' } }),
+    sseEvent('error', { code: 503, message: 'AI 服务暂时不可用', data: null }),
+  ))
+  const deltas = []
+  await assert.rejects(streamChatMessage('chat-access', '你好', { onDelta: text => deltas.push(text) }),
+    (error) => error instanceof ApiError && error.status === 503 && error.message.includes('暂时不可用'))
+  assert.deepEqual(deltas, ['部分回答'])
+})
+
+test('chat rejects a successful HTTP stream that closes without done', async () => {
+  mock.method(globalThis, 'fetch', async () => sseResponse(
+    sseEvent('delta', { code: 200, message: '操作成功', data: { text: '未完成' } }),
+  ))
+  await assert.rejects(streamChatMessage('chat-access', '你好', { onDelta() {} }),
+    (error) => error instanceof ApiError && error.status === 0 && error.message.includes('意外中断'))
 })

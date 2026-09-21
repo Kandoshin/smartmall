@@ -36,6 +36,7 @@ let credentialLeak = false
 const json = (route, status, data, message = '操作成功') => route.fulfill({
   status, contentType: 'application/json', body: JSON.stringify({ code: status, message, data }),
 })
+const sseEvent = (name, payload) => `event:${name}\ndata:${JSON.stringify(payload)}\n\n`
 
 // Never let an unexpected API call reach a live backend during browser checks.
 await context.route('**/api/**', route => route.abort('blockedbyclient'))
@@ -87,7 +88,16 @@ await context.route('**/api/chat', route => {
   assert.ok(['Bearer browser-test-token', 'Bearer browser-restored-token'].includes(route.request().headers().authorization))
   assert.equal((route.request().headers().cookie || '').includes('smartmall_refresh'), false)
   const { message } = route.request().postDataJSON()
-  return json(route, 200, { answer: `AI 测试回复：${message}` })
+  const answer = `AI 测试回复：${message}`
+  const midpoint = Math.ceil(answer.length / 2)
+  return route.fulfill({
+    status: 200,
+    contentType: 'text/event-stream',
+    body: sseEvent('status', { code: 200, message: '操作成功', data: { text: '正在思考…' } })
+      + sseEvent('delta', { code: 200, message: '操作成功', data: { text: answer.slice(0, midpoint) } })
+      + sseEvent('delta', { code: 200, message: '操作成功', data: { text: answer.slice(midpoint) } })
+      + sseEvent('done', { code: 200, message: '操作成功', data: { text: '' } }),
+  })
 })
 await context.route('**/api/auth/csrf', route => {
   assert.equal(route.request().method(), 'GET')

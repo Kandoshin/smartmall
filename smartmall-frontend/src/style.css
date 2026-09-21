@@ -58,8 +58,8 @@ svg { width: 24px; height: 24px; }
 .user-message { width: fit-content; max-width: 85%; margin: 0 0 24px auto; background: #f0f2ee; padding: 12px 18px; border-radius: 20px; white-space: pre-wrap; overflow-wrap: anywhere; line-height: 1.7; }
 .assistant-message { display: flex; gap: 14px; align-items: flex-start; }
 .assistant-mark { flex: 0 0 28px; height: 28px; display: grid; place-items: center; background: #edf2eb; border-radius: 8px; color: #32765b; font-size: 15px; }
-.assistant-message p { margin: 1px 0 0; font-size: 14px; line-height: 1.9; color: #626862; }
-.assistant-message p.chat-error { color: #a13d35; }
+.assistant-message p { margin: 1px 0 0; font-size: 14px; line-height: 1.9; color: #626862; white-space: pre-wrap; }
+.assistant-message .chat-error { color: #a13d35; }
 .has-messages .composer-area { flex: 0 0 auto; background: white; padding-top: 12px; padding-bottom: 18px; }
 .drawer-heading { display: flex; align-items: center; justify-content: space-between; margin-bottom: 24px; }
 .drawer-heading h2 { font-size: 19px; font-weight: 600; margin: 0; }

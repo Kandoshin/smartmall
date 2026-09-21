@@ -63,6 +63,6 @@ export type OrderCreateItem = {
   quantity: number
 }
 
-export type ChatResponse = {
-  answer: string
+export type ChatStreamEvent = {
+  text: string
 }

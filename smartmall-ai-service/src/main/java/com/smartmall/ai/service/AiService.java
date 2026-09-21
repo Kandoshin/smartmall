@@ -2,6 +2,7 @@ package com.smartmall.ai.service;
 
 import com.openai.client.OpenAIClient;
 import com.openai.core.JsonValue;
+import com.openai.core.http.StreamResponse;
 import com.openai.models.responses.EasyInputMessage;
 import com.openai.models.responses.FunctionTool;
 import com.openai.models.responses.Response;
@@ -10,6 +11,7 @@ import com.openai.models.responses.ResponseFunctionToolCall;
 import com.openai.models.responses.ResponseInputItem;
 import com.openai.models.responses.ResponseOutputItem;
 import com.openai.models.responses.ResponseOutputMessage;
+import com.openai.models.responses.ResponseStreamEvent;
 import com.smartmall.ai.exception.AiUpstreamException;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
@@ -17,6 +19,7 @@ import org.springframework.stereotype.Service;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.atomic.AtomicReference;
 
 @Service
 public class AiService {
@@ -43,7 +46,7 @@ public class AiService {
         this.model = model;
     }
 
-    public String chat(String message, String accessToken) {
+    public void chatStream(String message, String accessToken, ChatStreamSink sink) {
         List<ResponseInputItem> conversation = new ArrayList<>();
         conversation.add(ResponseInputItem.ofEasyInputMessage(
                 EasyInputMessage.builder()
@@ -52,18 +55,19 @@ public class AiService {
                         .build()));
 
         for (int round = 0; round < MAX_TOOL_ROUNDS; round++) {
-            Response response = createResponse(conversation);
+            Response response = createStreamingResponse(conversation, sink);
             List<ResponseFunctionToolCall> toolCalls = response.output().stream()
                     .filter(ResponseOutputItem::isFunctionCall)
                     .map(ResponseOutputItem::asFunctionCall)
                     .toList();
 
             if (toolCalls.isEmpty()) {
-                return extractText(response);
+                return;
             }
 
             appendResponseOutput(conversation, response.output());
             for (ResponseFunctionToolCall toolCall : toolCalls) {
+                sink.status(toolStatus(toolCall.name()));
                 String output = executeTool(toolCall, accessToken);
                 conversation.add(ResponseInputItem.ofFunctionCallOutput(
                         ResponseInputItem.FunctionCallOutput.builder()
@@ -77,7 +81,9 @@ public class AiService {
         throw new AiUpstreamException("AI 工具调用次数过多，请换一种方式描述需求");
     }
 
-    private Response createResponse(List<ResponseInputItem> conversation) {
+    private Response createStreamingResponse(
+            List<ResponseInputItem> conversation,
+            ChatStreamSink sink) {
         ResponseCreateParams params = ResponseCreateParams.builder()
                 .model(model)
                 .instructions(INSTRUCTIONS)
@@ -87,11 +93,50 @@ public class AiService {
                 .addTool(searchProductsTool)
                 .addTool(listMyOrdersTool)
                 .build();
-        try {
-            return openAIClient.responses().create(params);
+        AtomicReference<Response> completedResponse = new AtomicReference<>();
+        try (StreamResponse<ResponseStreamEvent> stream =
+                     openAIClient.responses().createStreaming(params)) {
+            stream.stream().forEach(event -> handleStreamEvent(
+                    event, sink, completedResponse));
         } catch (RuntimeException exception) {
+            if (exception instanceof AiUpstreamException) {
+                throw exception;
+            }
             throw new AiUpstreamException("AI 服务暂时不可用，请稍后重试", exception);
         }
+
+        Response response = completedResponse.get();
+        if (response == null) {
+            throw new AiUpstreamException("AI 流式响应未正常完成");
+        }
+        return response;
+    }
+
+    private void handleStreamEvent(
+            ResponseStreamEvent event,
+            ChatStreamSink sink,
+            AtomicReference<Response> completedResponse) {
+        if (!sink.isOpen()) {
+            throw new AiUpstreamException("客户端已断开连接");
+        }
+        if (event.isOutputTextDelta()) {
+            String delta = event.asOutputTextDelta().delta();
+            if (!delta.isEmpty()) {
+                sink.delta(delta);
+            }
+        } else if (event.isCompleted()) {
+            completedResponse.set(event.asCompleted().response());
+        } else if (event.isError() || event.isFailed() || event.isIncomplete()) {
+            throw new AiUpstreamException("AI 流式响应异常结束");
+        }
+    }
+
+    private String toolStatus(String toolName) {
+        return switch (toolName) {
+            case "search_products" -> "正在查询商品…";
+            case "list_my_orders" -> "正在查询你的订单…";
+            default -> "正在处理请求…";
+        };
     }
 
     private String executeTool(ResponseFunctionToolCall toolCall, String accessToken) {
@@ -124,24 +169,6 @@ public class AiService {
                 conversation.add(ResponseInputItem.ofResponseOutputMessage(item.asMessage()));
             }
         }
-    }
-
-    private String extractText(Response response) {
-        StringBuilder answer = new StringBuilder();
-        for (ResponseOutputItem item : response.output()) {
-            if (!item.isMessage()) {
-                continue;
-            }
-            for (ResponseOutputMessage.Content content : item.asMessage().content()) {
-                if (content.isOutputText()) {
-                    answer.append(content.asOutputText().text());
-                }
-            }
-        }
-        if (answer.length() == 0) {
-            throw new AiUpstreamException("AI 响应中没有可用的文本");
-        }
-        return answer.toString();
     }
 
     private FunctionTool createSearchProductsTool() {

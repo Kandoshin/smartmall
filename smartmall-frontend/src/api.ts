@@ -1,6 +1,6 @@
 import type {
   ApiResult,
-  ChatResponse,
+  ChatStreamEvent,
   LoginRequest,
   LoginResponse,
   OrderDetail,
@@ -183,17 +183,116 @@ export function cancelOrder(accessToken: string, orderId: number, signal?: Abort
   })
 }
 
-export function sendChatMessage(accessToken: string, message: string, signal?: AbortSignal) {
-  return request<ChatResponse>('/api/chat', {
-    method: 'POST',
-    credentials: 'omit',
-    cache: 'no-store',
-    headers: {
-      'Content-Type': 'application/json',
-      Authorization: `Bearer ${accessToken}`,
-    },
-    body: JSON.stringify({ message }),
-    signal,
-    timeoutMs: 65000,
-  })
+type ChatStreamHandlers = {
+  onDelta: (text: string) => void
+  onStatus?: (text: string) => void
+}
+
+function waitForNextPaint() {
+  if (typeof window === 'undefined') return Promise.resolve()
+  return new Promise<void>((resolve) => requestAnimationFrame(() => resolve()))
+}
+
+export async function streamChatMessage(
+  accessToken: string,
+  message: string,
+  handlers: ChatStreamHandlers,
+  signal?: AbortSignal,
+) {
+  signal?.throwIfAborted()
+  let response: Response
+  try {
+    response = await fetch('/api/chat', {
+      method: 'POST',
+      credentials: 'omit',
+      cache: 'no-store',
+      headers: {
+        'Content-Type': 'application/json',
+        Accept: 'text/event-stream',
+        Authorization: `Bearer ${accessToken}`,
+      },
+      body: JSON.stringify({ message }),
+      signal,
+    })
+  } catch (error) {
+    if (signal?.aborted) throw error
+    throw new ApiError(0, '无法连接 AI 服务，请确认后端已启动后重试')
+  }
+
+  if (!response.ok) {
+    let payload: ApiResult<unknown> | null = null
+    try {
+      payload = await response.json() as ApiResult<unknown>
+    } catch {
+      // A proxy may return an empty or HTML error page.
+    }
+    const fallback = response.status === 401
+      ? '登录已失效，请重新登录'
+      : `AI 服务响应异常（HTTP ${response.status}）`
+    throw new ApiError(response.status, payload?.message || fallback)
+  }
+
+  if (!response.body) {
+    throw new ApiError(0, '浏览器无法读取 AI 流式响应')
+  }
+
+  const reader = response.body.getReader()
+  const decoder = new TextDecoder()
+  let buffer = ''
+  let completed = false
+
+  const processFrame = async (frame: string) => {
+    if (!frame.trim() || frame.trimStart().startsWith(':')) return
+    let eventName = 'message'
+    const dataLines: string[] = []
+    for (const line of frame.split(/\r?\n/)) {
+      if (line.startsWith('event:')) eventName = line.slice(6).trim()
+      if (line.startsWith('data:')) dataLines.push(line.slice(5).trimStart())
+    }
+    if (!dataLines.length) return
+
+    let payload: ApiResult<ChatStreamEvent>
+    try {
+      payload = JSON.parse(dataLines.join('\n')) as ApiResult<ChatStreamEvent>
+    } catch {
+      throw new ApiError(0, 'AI 流式响应格式异常')
+    }
+
+    if (eventName === 'error' || payload.code >= 400) {
+      throw new ApiError(payload.code || 503, payload.message || 'AI 服务暂时不可用')
+    }
+    if (eventName === 'done') {
+      completed = true
+      return
+    }
+    if ((eventName === 'delta' || eventName === 'status')
+      && (typeof payload.data?.text !== 'string' || !payload.data.text)) {
+      throw new ApiError(0, 'AI 流式响应缺少文本内容')
+    }
+    if (eventName === 'delta') {
+      handlers.onDelta(payload.data.text)
+      await waitForNextPaint()
+    }
+    if (eventName === 'status') handlers.onStatus?.(payload.data.text)
+  }
+
+  try {
+    while (true) {
+      const { value, done } = await reader.read()
+      if (done) break
+      buffer += decoder.decode(value, { stream: true })
+      const frames = buffer.split(/\r?\n\r?\n/)
+      buffer = frames.pop() ?? ''
+      for (const frame of frames) await processFrame(frame)
+    }
+    buffer += decoder.decode()
+    if (buffer.trim()) await processFrame(buffer)
+  } finally {
+    reader.releaseLock()
+  }
+
+  signal?.throwIfAborted()
+  if (!completed) {
+    throw new ApiError(0, 'AI 流式响应意外中断，请重试')
+  }
 }

@@ -1,5 +1,5 @@
 import { onMounted, onUnmounted, ref } from 'vue'
-import { ApiError, cancelOrder, createOrder, getCurrentUser, getMyOrders, getOrderDetail, login, logoutSession, refreshSession, sendChatMessage } from '../api'
+import { ApiError, cancelOrder, createOrder, getCurrentUser, getMyOrders, getOrderDetail, login, logoutSession, refreshSession, streamChatMessage } from '../api'
 import type { LoginResponse, OrderCreateItem, OrderDetail, User } from '../types'
 
 export function useAuth() {
@@ -161,7 +161,12 @@ export function useAuth() {
     }
   }
 
-  async function chatWithAi(message: string, signal?: AbortSignal) {
+  async function chatWithAi(
+    message: string,
+    onDelta: (text: string) => void,
+    onStatus: (text: string) => void,
+    signal?: AbortSignal,
+  ) {
     if (!accessToken || !currentUser.value || Date.now() >= expiresAt) {
       if (currentUser.value) expireSession()
       throw new ApiError(401, '登录已失效，请重新登录')
@@ -172,13 +177,19 @@ export function useAuth() {
     const requestSignal = signal
       ? AbortSignal.any([signal, sessionRequests.signal])
       : sessionRequests.signal
+    let receivedText = false
     try {
-      const response = await sendChatMessage(token, message, requestSignal)
+      await streamChatMessage(token, message, {
+        onDelta(text) {
+          receivedText = true
+          onDelta(text)
+        },
+        onStatus,
+      }, requestSignal)
       requestSignal.throwIfAborted()
-      if (!response || typeof response.answer !== 'string' || !response.answer.trim()) {
+      if (!receivedText) {
         throw new ApiError(0, 'AI 响应格式异常，请稍后重试')
       }
-      return response.answer.trim()
     } catch (error) {
       if (!requestSignal.aborted && version === requestVersion
         && error instanceof ApiError && error.status === 401) {
