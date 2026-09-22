@@ -19,7 +19,12 @@ public class SecurityConfig {
                 .sessionManagement(session -> session
                         .sessionCreationPolicy(SessionCreationPolicy.STATELESS))
                 .authorizeHttpRequests(auth -> auth
-                        .requestMatchers("/chat").authenticated()
+                        .requestMatchers("/chat",
+                                "/langchain4j-probe",
+                                "/langchain4j-probe/**",
+                                "/langgraph-probe",
+                                "/langgraph-probe/**")
+                        .authenticated()
                         .anyRequest().denyAll())
                 .exceptionHandling(errors -> errors
                         .authenticationEntryPoint(securityErrorHandler)
