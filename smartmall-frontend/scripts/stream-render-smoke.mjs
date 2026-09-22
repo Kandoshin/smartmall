@@ -27,7 +27,7 @@ const aiServer = createServer((request, response) => {
   response.write(sse('status', '正在思考…'))
   response.write(sse('delta', '第一段'))
   setTimeout(() => {
-    response.write(sse('delta', '第二段'))
+    response.write(sse('delta', '第二段\n\n- **查商品**：\n\n<script>window.__unsafeMarkdownRan = true</script>'))
     response.end(sse('done', ''))
   }, 1200)
 })
@@ -120,8 +120,15 @@ try {
   }
   assert.equal(await page.getByText('第二段', { exact: true }).count(), 0,
     '第一段已经到达页面时，第二段不应提前出现')
-  await page.getByText('第一段第二段', { exact: true }).waitFor()
-  console.log('PASS first SSE delta is visibly rendered before the delayed second delta')
+  await page.getByText('第一段第二段', { exact: false }).waitFor()
+  await page.locator('.assistant-message li strong', { hasText: '查商品' }).waitFor()
+  assert.equal(await page.locator('.assistant-message script').count(), 0,
+    'raw HTML from the model must not become executable DOM')
+  assert.notEqual(await page.locator('.assistant-message').innerText().then(text => text.includes('<script>')), false,
+    'disabled raw HTML should remain visible as text')
+  assert.equal(await page.evaluate(() => window.__unsafeMarkdownRan), undefined,
+    'raw model HTML must never execute')
+  console.log('PASS SSE deltas render progressively as safe Markdown')
 } finally {
   await browser?.close()
   await new Promise(resolve => aiServer.close(resolve))

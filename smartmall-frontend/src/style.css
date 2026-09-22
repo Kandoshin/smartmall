@@ -58,7 +58,24 @@ svg { width: 24px; height: 24px; }
 .user-message { width: fit-content; max-width: 85%; margin: 0 0 24px auto; background: #f0f2ee; padding: 12px 18px; border-radius: 20px; white-space: pre-wrap; overflow-wrap: anywhere; line-height: 1.7; }
 .assistant-message { display: flex; gap: 14px; align-items: flex-start; }
 .assistant-mark { flex: 0 0 28px; height: 28px; display: grid; place-items: center; background: #edf2eb; border-radius: 8px; color: #32765b; font-size: 15px; }
-.assistant-message p { margin: 1px 0 0; font-size: 14px; line-height: 1.9; color: #626862; white-space: pre-wrap; }
+.assistant-content { flex: 1; min-width: 0; color: #626862; font-size: 14px; line-height: 1.9; overflow-wrap: anywhere; }
+.assistant-content p { margin: 0 0 12px; }
+.assistant-content > :last-child, .markdown-body > :last-child { margin-bottom: 0; }
+.assistant-status { white-space: pre-wrap; }
+.markdown-body ul, .markdown-body ol { margin: 8px 0 14px; padding-left: 24px; }
+.markdown-body li { margin: 4px 0; padding-left: 2px; }
+.markdown-body li > p { margin: 0; }
+.markdown-body h1, .markdown-body h2, .markdown-body h3 { margin: 18px 0 8px; color: #343a35; line-height: 1.35; }
+.markdown-body h1 { font-size: 20px; }
+.markdown-body h2 { font-size: 18px; }
+.markdown-body h3 { font-size: 16px; }
+.markdown-body strong { color: #343a35; font-weight: 650; }
+.markdown-body a { color: #28735a; text-decoration-thickness: 1px; text-underline-offset: 3px; }
+.markdown-body blockquote { margin: 10px 0; padding: 2px 0 2px 14px; border-left: 3px solid #cedbd2; color: #737a74; }
+.markdown-body code { padding: 2px 5px; border-radius: 5px; background: #f0f3ef; color: #3d564a; font-family: ui-monospace, SFMono-Regular, Consolas, monospace; font-size: 0.92em; }
+.markdown-body pre { margin: 12px 0; padding: 14px 16px; overflow-x: auto; border-radius: 10px; background: #202521; color: #eef4ef; line-height: 1.6; }
+.markdown-body pre code { padding: 0; background: transparent; color: inherit; font-size: 12px; }
+.markdown-body hr { margin: 18px 0; border: 0; border-top: 1px solid #e1e6e1; }
 .assistant-message .chat-error { color: #a13d35; }
 .has-messages .composer-area { flex: 0 0 auto; background: white; padding-top: 12px; padding-bottom: 18px; }
 .drawer-heading { display: flex; align-items: center; justify-content: space-between; margin-bottom: 24px; }

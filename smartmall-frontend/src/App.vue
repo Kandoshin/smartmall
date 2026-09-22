@@ -4,6 +4,7 @@ import AuthPanel from './components/AuthPanel.vue'
 import CommercePanel from './components/CommercePanel.vue'
 import ModalSurface from './components/ModalSurface.vue'
 import { useAuth } from './composables/useAuth'
+import { renderMarkdown } from './markdown'
 
 const { username, password, currentUser, busy, errorMessage, statusMessage, logoutNeedsRetry,
   restoring, restoreNeedsRetry, restoreSession, handleLogin, logout, fetchMyOrders, fetchOrderDetail,
@@ -202,10 +203,11 @@ watch(currentUser, async (user) => {
           <p class="user-message">{{ message.userText }}</p>
           <div class="assistant-message">
             <span class="assistant-mark" aria-hidden="true">S</span>
-            <p>
-              <span v-if="message.pending && !message.assistantText">{{ message.statusText }}</span>
-              <span v-if="message.assistantText">{{ message.assistantText }}</span><span v-if="message.errorText" class="chat-error">{{ message.assistantText ? '\n\n' : '' }}{{ message.errorText }}</span>
-            </p>
+            <div class="assistant-content">
+              <p v-if="message.pending && !message.assistantText" class="assistant-status">{{ message.statusText }}</p>
+              <div v-if="message.assistantText" class="markdown-body" v-html="renderMarkdown(message.assistantText)" />
+              <p v-if="message.errorText" class="chat-error">{{ message.errorText }}</p>
+            </div>
           </div>
         </article>
       </section>
