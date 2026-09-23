@@ -19,7 +19,7 @@ public class SecurityConfig {
                 .sessionManagement(session -> session
                         .sessionCreationPolicy(SessionCreationPolicy.STATELESS))
                 .authorizeHttpRequests(auth -> auth
-                        .requestMatchers("/chat")
+                        .requestMatchers("/chat", "/langgraph-probe/product")
                         .authenticated()
                         .anyRequest().permitAll())
                 .exceptionHandling(errors -> errors

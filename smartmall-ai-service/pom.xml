@@ -28,7 +28,6 @@
     </scm>
     <properties>
         <java.version>17</java.version>
-        <spring-ai.version>2.0.1</spring-ai.version>
         <langchain4j.version>1.20.0</langchain4j.version>
         <langgraph4j.version>1.9.0</langgraph4j.version>
     </properties>
@@ -44,10 +43,6 @@
         <dependency>
             <groupId>org.springframework.boot</groupId>
             <artifactId>spring-boot-starter-webmvc</artifactId>
-        </dependency>
-        <dependency>
-            <groupId>org.springframework.ai</groupId>
-            <artifactId>spring-ai-openai</artifactId>
         </dependency>
         <dependency>
             <groupId>com.smartmall</groupId>
@@ -86,18 +81,6 @@
             <scope>test</scope>
         </dependency>
     </dependencies>
-    <dependencyManagement>
-        <dependencies>
-            <dependency>
-                <groupId>org.springframework.ai</groupId>
-                <artifactId>spring-ai-bom</artifactId>
-                <version>${spring-ai.version}</version>
-                <type>pom</type>
-                <scope>import</scope>
-            </dependency>
-        </dependencies>
-    </dependencyManagement>
-
     <build>
         <plugins>
             <plugin>

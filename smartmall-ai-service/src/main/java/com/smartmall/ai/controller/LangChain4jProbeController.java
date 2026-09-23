@@ -2,6 +2,7 @@ package com.smartmall.ai.controller;
 
 import com.smartmall.ai.service.ProductProbeAssistant;
 import com.smartmall.common.Result;
+import dev.langchain4j.invocation.InvocationParameters;
 import dev.langchain4j.model.chat.response.ChatResponse;
 import dev.langchain4j.model.chat.response.StreamingChatResponseHandler;
 import dev.langchain4j.model.openai.OpenAiResponsesChatModel;
@@ -77,6 +78,6 @@ public class LangChain4jProbeController {
 
     @GetMapping("/product")
     public Result<String> product(@RequestParam String message) {
-        return Result.success(productProbeAssistant.chat(message));
+        return Result.success(productProbeAssistant.chat(message, new InvocationParameters()));
     }
 }

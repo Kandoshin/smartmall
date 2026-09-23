@@ -78,7 +78,7 @@ Vue 前端
   ├─ /api/auth     -> 用户服务 -> JWT 校验 / MyBatis-Plus -> MySQL
   ├─ /api/products -> 商品服务 -> MyBatis-Plus -> MySQL
   ├─ /api/orders   -> 订单服务 -> 商品服务 -> MyBatis-Plus -> MySQL
-  └─ /api/chat     -> AI 服务 -> Responses API（SSE 流式输出）
+  └─ /api/chat     -> AI 服务 -> LangGraph4j + LangChain4j Responses（SSE 流式输出）
                            ├─ 商品查询工具 -> 商品服务
                            └─ 本人订单工具 -> 订单服务（转发当前 Access Token）
 ```

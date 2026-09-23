@@ -2,7 +2,8 @@ package com.smartmall.ai.controller;
 
 import com.smartmall.ai.dto.ChatRequest;
 import com.smartmall.ai.dto.ChatStreamEvent;
-import com.smartmall.ai.service.AiService;
+import com.smartmall.ai.service.ShoppingGraphService;
+import com.smartmall.ai.exception.AiUpstreamException;
 import com.smartmall.ai.service.ChatStreamSink;
 import com.smartmall.common.Result;
 import jakarta.validation.Valid;
@@ -26,13 +27,13 @@ public class ChatController {
 
     private static final long STREAM_TIMEOUT_MILLIS = 120_000L;
 
-    private final AiService aiService;
+    private final ShoppingGraphService shoppingGraphService;
     private final Executor chatExecutor;
 
     public ChatController(
-            AiService aiService,
+            ShoppingGraphService shoppingGraphService,
             @Qualifier("chatExecutor") Executor chatExecutor) {
-        this.aiService = aiService;
+        this.shoppingGraphService = shoppingGraphService;
         this.chatExecutor = chatExecutor;
     }
 
@@ -58,18 +59,18 @@ public class ChatController {
             SseEmitter emitter,
             EmitterChatStreamSink sink) {
         try {
-            aiService.chatStream(message, accessToken, sink);
+            shoppingGraphService.runStream(message, accessToken, sink);
             if (sink.isOpen()) {
                 sink.send("done", Result.success(new ChatStreamEvent("")));
                 emitter.complete();
             }
         } catch (StreamDisconnectedException exception) {
-            // The browser has gone away; the upstream stream is closed by AiService.
+            // The browser has gone away; stop sending downstream events.
         } catch (RuntimeException exception) {
             if (sink.isOpen()) {
-                String errorMessage = exception.getMessage() == null || exception.getMessage().isBlank()
-                        ? "AI 服务暂时不可用，请稍后重试"
-                        : exception.getMessage();
+                String errorMessage = exception instanceof AiUpstreamException
+                        ? exception.getMessage()
+                        : "AI 服务暂时不可用，请稍后重试";
                 try {
                     sink.send("error", Result.failure(503, errorMessage));
                     emitter.complete();

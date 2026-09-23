@@ -1,6 +1,6 @@
 package com.smartmall.ai.controller;
 
-import com.smartmall.ai.service.AiService;
+import com.smartmall.ai.service.ShoppingGraphService;
 import com.smartmall.ai.service.ChatStreamSink;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -39,7 +39,7 @@ class ChatControllerTest {
     private MockMvc mockMvc;
 
     @MockitoBean
-    private AiService aiService;
+    private ShoppingGraphService shoppingGraphService;
 
     @Test
     void authenticatedChatStreamsUnifiedEvents() throws Exception {
@@ -49,7 +49,7 @@ class ChatControllerTest {
             sink.delta("这里有");
             sink.delta("几款在售键盘");
             return null;
-        }).when(aiService).chatStream(
+        }).when(shoppingGraphService).runStream(
                 eq("推荐一把键盘"), eq("access-token"), any(ChatStreamSink.class));
 
         MvcResult result = mockMvc.perform(post("/chat")
@@ -75,7 +75,7 @@ class ChatControllerTest {
     }
 
     @Test
-    void blankMessageIsRejectedBeforeCallingAi() throws Exception {
+    void blankMessageIsRejectedBeforeCallingGraph() throws Exception {
         mockMvc.perform(post("/chat")
                         .with(jwt().jwt(jwt -> jwt.subject("7").tokenValue("access-token")))
                         .contentType(MediaType.APPLICATION_JSON)
@@ -84,7 +84,7 @@ class ChatControllerTest {
                 .andExpect(jsonPath("$.code").value(400))
                 .andExpect(jsonPath("$.message").value("消息不能为空"));
 
-        verify(aiService, never()).chatStream(anyString(), anyString(), any(ChatStreamSink.class));
+        verify(shoppingGraphService, never()).runStream(anyString(), anyString(), any(ChatStreamSink.class));
     }
 
     @Test
@@ -99,7 +99,7 @@ class ChatControllerTest {
     @Test
     void upstreamFailureAfterStreamStartsUsesErrorEvent() throws Exception {
         doThrow(new RuntimeException("AI 服务暂时不可用，请稍后重试"))
-                .when(aiService).chatStream(
+                .when(shoppingGraphService).runStream(
                         eq("你好"), eq("access-token"), any(ChatStreamSink.class));
 
         MvcResult result = mockMvc.perform(post("/chat")

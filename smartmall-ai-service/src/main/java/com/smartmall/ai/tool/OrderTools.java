@@ -8,7 +8,7 @@ import org.springframework.stereotype.Component;
 @Component
 public class OrderTools {
 
-    private static final String ACCESS_TOKEN_KEY = "accessToken";
+    public static final String ACCESS_TOKEN_KEY = "accessToken";
 
     private final CommerceToolService commerceToolService;
 
