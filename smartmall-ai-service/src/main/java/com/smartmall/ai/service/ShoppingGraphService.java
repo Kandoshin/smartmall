@@ -5,7 +5,7 @@ import org.bsc.langgraph4j.GraphInput;
 import org.bsc.langgraph4j.GraphStateException;
 import org.bsc.langgraph4j.RunnableConfig;
 import org.bsc.langgraph4j.StateGraph;
-import org.bsc.langgraph4j.state.AgentState;
+import com.smartmall.ai.state.ShoppingState;
 import org.springframework.stereotype.Service;
 
 import java.util.Map;
@@ -17,19 +17,17 @@ import static org.bsc.langgraph4j.action.AsyncNodeAction.node_async;
 @Service
 public class ShoppingGraphService {
 
-    private final CompiledGraph<AgentState> graph;
+    private final CompiledGraph<ShoppingState> graph;
 
     public ShoppingGraphService(ProductProbeAssistant assistant)
             throws GraphStateException {
-        this.graph = new StateGraph<>(AgentState::new)
+        this.graph = new StateGraph<>(ShoppingState::new)
                 .addNode("shopping_agent", node_async(state -> {
-                    String message = state.<String>value("message")
-                            .orElseThrow(() ->
-                                    new IllegalArgumentException("缺少用户消息"));
+                    String message = state.message();
 
                     String answer = assistant.chat(message);
 
-                    return Map.of("answer", answer);
+                    return Map.of(ShoppingState.ANSWER_KEY, answer);
                 }))
                 .addEdge(START, "shopping_agent")
                 .addEdge("shopping_agent", END)
@@ -41,14 +39,14 @@ public class ShoppingGraphService {
             throw new IllegalArgumentException("消息不能为空");
         }
 
-        AgentState finalState = graph.invoke(
-                        GraphInput.args(Map.of("message", message)),
+        ShoppingState finalState = graph.invoke(
+                        GraphInput.args(Map.of(ShoppingState.MESSAGE_KEY, message)),
                         RunnableConfig.empty()
                 )
                 .orElseThrow(() ->
                         new IllegalStateException("图没有产生最终状态"));
 
-        return finalState.<String>value("answer")
+        return finalState.answer()
                 .orElse("AI 没有返回回答");
     }
 }
